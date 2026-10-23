@@ -144,7 +144,7 @@ window.addEventListener('hashchange', route);
 // Kasse + Verkaufserlöse werden gleichmäßig auf die Teilnehmer verteilt; Saldo = erhält − zahlt.
 // Erwartet interests/participants mit profiles.display_name.
 function settle({ status, pct, drops, interests, participants }) {
-  const open = status === 'offen';
+  const open = status === 'offen' || status === 'muell';
   // Stückpreis: Override des Admins, sonst Marktpreis (nur normale Items), sonst NPC-Verkaufspreis
   const unit = (d) => d.price_override ?? (d.is_plain ? unitPrice(d) : null) ?? npcSell(d.npc_price);
   const value = (d, amount = d.amount) => (unit(d) != null ? unit(d) * amount : null);
@@ -292,11 +292,12 @@ function parseZeny(text) {
 
 async function viewParty(id) {
   id = Number(id);
-  const [party, members, runs] = await Promise.all([
+  const [party, members, runs, trash] = await Promise.all([
     q(sb.from('parties').select('id, name, created_by, party_price_pct').eq('id', id).maybeSingle()),
     q(sb.from('party_members').select('user_id, role, profiles(display_name, avatar_url)').eq('party_id', id)),
     q(sb.from('runs').select('id, title, status, created_at, drops(count)').eq('party_id', id)
       .order('created_at', { ascending: false })),
+    q(sb.from('party_trash').select('item_id, items(name, icon, slots, npc_price)').eq('party_id', id)),
   ]);
   if (!party) return h('p', { class: 'muted' }, 'Party nicht gefunden oder kein Zugriff.');
 
@@ -430,6 +431,55 @@ async function viewParty(id) {
     }),
   }, 'Party löschen');
 
+  // Müll-Liste: Items, die in der Phase „Müll verkaufen“ automatisch an NPC gehen
+  trash.sort((a, b) => (a.items?.name ?? '').localeCompare(b.items?.name ?? ''));
+  const trashIds = new Set(trash.map((t) => t.item_id));
+  let trashAdd = null;
+  if (isAdmin) {
+    const search = h('input', { type: 'search', placeholder: 'Item zur Müll-Liste hinzufügen (Name oder ID)' });
+    const results = h('ul', { class: 'list' });
+    search.addEventListener('input', debounce(async () => {
+      const term = search.value.trim();
+      if (term.length < 2 && !/^\d+$/.test(term)) return results.replaceChildren();
+      try {
+        let query = sb.from('items').select('item_id, name, icon, slots, npc_price').limit(15);
+        query = /^\d+$/.test(term) ? query.eq('item_id', Number(term)) : query.ilike('name', `%${term}%`).order('name');
+        const found = await q(query);
+        results.replaceChildren(...found.map((it) => h('li', {},
+          icon(it.icon),
+          h('span', {}, it.name + (it.slots ? ` [${it.slots}]` : '')),
+          h('span', { class: 'muted small' }, `#${it.item_id} · NPC ${zeny(npcSell(it.npc_price))}`),
+          trashIds.has(it.item_id)
+            ? h('span', { class: 'badge', style: 'margin-left:auto' }, 'schon Müll')
+            : h('button', {
+                class: 'small', style: 'margin-left:auto',
+                onclick: action(async () => {
+                  await q(sb.from('party_trash').insert({ party_id: id, item_id: it.item_id }));
+                  toast(`${it.name} ist jetzt Müll`);
+                  rerender();
+                }),
+              }, 'Als Müll'),
+        )));
+        if (!found.length) results.append(h('li', { class: 'muted small' }, 'Nichts gefunden.'));
+      } catch (e) { toast(e.message, true); }
+    }, 300));
+    trashAdd = h('div', { class: 'stack', style: 'margin-top:12px' }, search, results);
+  }
+  const trashList = trash.length
+    ? h('ul', { class: 'list' }, trash.map((t) => h('li', {},
+        icon(t.items?.icon),
+        h('span', {}, (t.items?.name ?? `#${t.item_id}`) + (t.items?.slots ? ` [${t.items.slots}]` : '')),
+        h('span', { class: 'muted small' }, `NPC ${zeny(npcSell(t.items?.npc_price))}`),
+        isAdmin ? h('button', {
+          class: 'small danger', style: 'margin-left:auto',
+          onclick: action(async () => {
+            await q(sb.from('party_trash').delete().eq('party_id', id).eq('item_id', t.item_id));
+            rerender();
+          }),
+        }, 'Entfernen') : null,
+      )))
+    : h('p', { class: 'muted small' }, 'Noch keine Items als Müll markiert.');
+
   return h('div', {},
     h('p', { class: 'small' }, h('a', { href: '#/' }, '← Partys')),
     h('div', { class: 'row spread' }, h('h1', {}, party.name, rename), del),
@@ -440,34 +490,42 @@ async function viewParty(id) {
     h('div', { class: 'panel' }, runList),
     h('h2', {}, `Mitglieder (${members.length})`),
     h('div', { class: 'panel' }, memberList, addMember),
+    h('h2', {}, `Müll-Liste (${trash.length})`),
+    h('div', { class: 'panel' },
+      h('p', { class: 'muted small', style: 'margin-top:0' },
+        'Müll wird beim Würfeln automatisch an NPC verkauft – außer bei Wunschlisten-Konflikt, Interesse oder Zuweisung.'),
+      trashList, trashAdd),
     h('p', { class: 'muted small' },
-      'Admin: Mitglieder, Rollen, Partypreis, alle Runs, Preise überschreiben, Items zuweisen. ' +
+      'Admin: Mitglieder, Rollen, Partypreis, Müll-Liste, alle Runs, Preise überschreiben, Items zuweisen. ' +
       'Verkäufer: Verkaufserlöse erfassen. Teilnehmer: Interesse eintragen, eigene Runs anlegen.'),
   );
 }
 
 // ---------- Run ----------
 
-const PHASES = ['offen', 'abholung', 'verkauf', 'auszahlung', 'beendet'];
+const PHASES = ['offen', 'muell', 'abholung', 'verkauf', 'auszahlung', 'beendet'];
 const PHASE_LABEL = {
-  offen: 'Loot & Interessen', abholung: 'Abholung', verkauf: 'Verkauf & Rest', auszahlung: 'Auszahlung', beendet: 'Beendet',
+  offen: 'Loot & Interessen', muell: 'Müll verkaufen', abholung: 'Abholung', verkauf: 'Verkauf & Rest',
+  auszahlung: 'Auszahlung', beendet: 'Beendet',
 };
-const statusBadge = (status) => h('span', { class: 'badge ' + (status === 'beendet' ? '' : status === 'offen' ? 'warn' : 'good') },
-  PHASE_LABEL[status]);
+const statusBadge = (status) => h('span', {
+  class: 'badge ' + (status === 'beendet' ? '' : status === 'offen' || status === 'muell' ? 'warn' : 'good'),
+}, PHASE_LABEL[status]);
 
-// Fortschrittsleiste: Erstellen → Loot → Würfeln → Abholung → Verkauf/Rest → Auszahlung → Beendet
+// Fortschrittsleiste: Erstellen → Loot → Müll → Würfeln → Abholung → Verkauf/Rest → Auszahlung → Beendet
 function stepper(status, hasDrops) {
   const phase = PHASES.indexOf(status);
   const steps = [
     ['Erstellt', true],
     ['Loot befüllt', hasDrops],
-    ['Ausgewürfelt', phase >= 1],
-    ['Abholung', phase > 1],
-    ['Verkauf & Rest', phase > 2],
-    ['Auszahlung', phase > 3],
-    ['Beendet', phase >= 4],
+    ['Müll verkaufen', phase >= 2],
+    ['Ausgewürfelt', phase >= 2],
+    ['Abholung', phase > 2],
+    ['Verkauf & Rest', phase > 3],
+    ['Auszahlung', phase > 4],
+    ['Beendet', phase >= 5],
   ];
-  const current = status === 'offen' ? (hasDrops ? 2 : 1) : status === 'beendet' ? 6 : phase + 2;
+  const current = status === 'offen' ? (hasDrops ? 2 : 1) : status === 'muell' ? 2 : status === 'beendet' ? 7 : phase + 2;
   return h('ol', { class: 'stepper' }, steps.map(([label, done], i) =>
     h('li', { class: i === current ? 'current' : done ? 'done' : '' }, label)));
 }
@@ -492,9 +550,19 @@ async function viewRun(id) {
   // Historie der letzten 10 Runs: was wurde mit übrigen Items gemacht → Vorbelegung in „Verkauf & Rest“
   const trends = run.status === 'verkauf' ? await q(sb.rpc('leftover_trends', { p_run: id })) : [];
   const trendBy = new Map(trends.map((t) => [t.item_id, t]));
+  // Müll-Liste der Party und Wunschlisten-Konflikte (nur in „Müll verkaufen“ gebraucht)
+  const [trashRows, conflicts] = run.status === 'muell'
+    ? await Promise.all([
+        q(sb.from('party_trash').select('item_id').eq('party_id', run.party_id)),
+        q(sb.rpc('wishlist_conflicts', { p_run: id })),
+      ])
+    : [[], []];
+  const trash = new Set(trashRows.map((t) => t.item_id));
+  const conflictBy = new Map(conflicts.map((c) => [c.drop_id, c.names]));
 
   const status = run.status;
-  const open = status === 'offen';
+  const open = status === 'offen' || status === 'muell';          // vor dem Würfeln
+  const trashPhase = status === 'muell';
   const finished = status === 'beendet';
   const myRole = members.find((m) => m.user_id === me.id)?.role;
   const isAdmin = myRole === 'admin';
@@ -520,6 +588,9 @@ async function viewRun(id) {
   const total = drops.reduce((s, d) => s + (value(d) ?? 0), 0);
   const leftovers = drops.filter((d) => !byDrop.has(d.id));          // ohne Empfänger
   const unsold = leftovers.filter((d) => d.sold_price == null);
+  const trashBlock = (d) => (conflictBy.has(d.id) ? 'wunschliste' : d.assigned_to != null ? 'zuweisung'
+    : byDrop.has(d.id) ? 'interesse' : npcSell(d.npc_price) == null ? 'npc' : null);
+  const trashToSell = trashPhase ? drops.filter((d) => trash.has(d.item_id) && d.sold_price == null && !trashBlock(d)) : [];
 
   const changeStatus = (to, question) => action(async () => {
     if (question && !confirm(question)) return;
@@ -529,20 +600,28 @@ async function viewRun(id) {
 
   // ----- Kopf mit Phasen-Aktionen -----
   const phaseButtons = [];
-  if (open && canManage && drops.length) {
+  if (status === 'offen' && canAdvance && drops.length) {
+    phaseButtons.push(h('button', { class: 'primary', onclick: changeStatus('muell') }, 'Weiter: Müll verkaufen →'));
+  }
+  if (trashPhase && canAdvance) {
+    phaseButtons.push(h('button', { class: 'small', onclick: changeStatus('offen') }, `← ${PHASE_LABEL.offen}`));
+  }
+  if (trashPhase && canManage) {
     phaseButtons.push(h('button', {
       class: 'primary',
       onclick: action(async () => {
-        if (!confirm('Jetzt würfeln? Danach können keine Interessen mehr geändert werden.')) return;
-        await q(sb.rpc('roll_run', { p_run: id }));
-        toast('Gewürfelt – Abholung beginnt');
+        const sum = trashToSell.reduce((s, d) => s + d.amount * npcSell(d.npc_price), 0);
+        const trashText = trashToSell.length ? ` ${trashToSell.length} Müll-Drop(s) werden für ${zeny(sum)} an NPC verkauft.` : '';
+        if (!confirm(`Jetzt würfeln?${trashText} Danach können keine Interessen mehr geändert werden.`)) return;
+        const n = await q(sb.rpc('roll_run', { p_run: id }));
+        toast(n ? `Gewürfelt – ${n} Müll-Drop(s) an NPC verkauft` : 'Gewürfelt – Abholung beginnt');
         rerender();
       }),
     }, 'Auswürfeln'));
   }
   if (canAdvance && !open) {
     const i = PHASES.indexOf(status);
-    if (i > 1) phaseButtons.push(h('button', { class: 'small', onclick: changeStatus(PHASES[i - 1]) }, `← ${PHASE_LABEL[PHASES[i - 1]]}`));
+    if (i > 2) phaseButtons.push(h('button', { class: 'small', onclick: changeStatus(PHASES[i - 1]) }, `← ${PHASE_LABEL[PHASES[i - 1]]}`));
     // Rest wird erst mit der Auszahlung ausgehändigt und zählt vorher nicht als offene Abholung
     const openPickups = handouts.filter((x) => !x.picked_up_at && x.source !== 'rest').length;
     const openRest = handouts.filter((x) => !x.picked_up_at && x.source === 'rest').length;
@@ -598,7 +677,7 @@ async function viewRun(id) {
 
   // ----- Import -----
   let importBox = null;
-  if (open && canManage) {
+  if (status === 'offen' && canManage) {
     const text = h('textarea', { placeholder: 'Guild-Storage-Liste hier einfügen (ID, Name, Amount, Attributes, Cards – tab-getrennt)' });
     importBox = h('details', { class: 'panel', open: drops.length === 0, style: 'margin:14px 0' },
       h('summary', {}, drops.length ? 'Weitere Liste einfügen' : 'Loot einfügen'),
@@ -774,6 +853,7 @@ async function viewRun(id) {
   // Filter
   const filter = h('input', { type: 'search', placeholder: 'Filtern …' });
   const onlyInterest = h('input', { type: 'checkbox' });
+  const onlyTrash = h('input', { type: 'checkbox' });
 
   const rows = drops.map((d) => {
     const list = byDrop.get(d.id) || [];
@@ -809,7 +889,7 @@ async function viewRun(id) {
           ? h('span', { title: d.is_plain ? 'Kein Marktpreis – NPC-Verkaufspreis als Ersatz' : 'Marktpreis gilt nur für normale Items – NPC-Verkaufspreis als Ersatz' },
               zeny(npcSell(d.npc_price)), h('span', { class: 'badge' }, 'NPC'))
           : '–',
-      isAdmin && ['offen', 'abholung', 'verkauf'].includes(status)
+      isAdmin && ['offen', 'muell', 'abholung', 'verkauf'].includes(status)
         ? h('button', { class: 'link small', title: 'Preis überschreiben', onclick: editPrice(d) }, '✎') : null,
       isAdmin ? h('a', {
         class: 'small', style: 'padding:0 4px;text-decoration:none',
@@ -873,7 +953,19 @@ async function viewRun(id) {
         }),
       }, 'Aufteilung zurück'));
     }
-    if (isAdmin && ['offen', 'abholung', 'verkauf'].includes(status) && !isRest) actions.push(assignSelect(d));
+    if (isAdmin && ['offen', 'muell', 'abholung', 'verkauf'].includes(status) && !isRest) actions.push(assignSelect(d));
+    if (trashPhase && isAdmin && d.item_type != null) {
+      const isTrash = trash.has(d.item_id);
+      actions.push(h('button', {
+        class: 'small' + (isTrash ? ' on' : ''),
+        title: isTrash ? 'Von der Müll-Liste der Party nehmen' : 'Auf die Müll-Liste der Party setzen',
+        onclick: action(async () => {
+          if (isTrash) await q(sb.from('party_trash').delete().eq('party_id', run.party_id).eq('item_id', d.item_id));
+          else await q(sb.from('party_trash').insert({ party_id: run.party_id, item_id: d.item_id }));
+          rerender();
+        }),
+      }, isTrash ? 'Müll ✓' : 'Müll'));
+    }
     if (open && canManage) {
       actions.push(h('button', {
         class: 'link small', title: 'Drop löschen',
@@ -890,6 +982,17 @@ async function viewRun(id) {
         d.name,
         !d.is_plain ? h('span', { class: 'badge warn', title: [d.attributes, d.cards].filter(Boolean).join(' · ') },
           'Attr./Karten') : null,
+        trashPhase && trash.has(d.item_id) ? (() => {
+          const block = d.sold_price == null ? trashBlock(d) : null;
+          if (!block) return h('span', { class: 'badge', title: 'Wird beim Würfeln an NPC verkauft' }, 'Müll → NPC');
+          const text = {
+            wunschliste: `⚠ Wunschliste: ${(conflictBy.get(d.id) || []).join(', ')}`,
+            interesse: '⚠ Interesse eingetragen',
+            zuweisung: '⚠ zugewiesen',
+            npc: '⚠ kein NPC-Preis',
+          }[block];
+          return h('span', { class: 'badge warn', title: 'Müll – wird beim Würfeln nicht verkauft' }, `Müll · ${text}`);
+        })() : null,
         (() => {
           const sug = restMode && !list.length && d.sold_price == null ? suggestion(d) : null;
           return sug ? h('span', {
@@ -916,17 +1019,20 @@ async function viewRun(id) {
     );
     tr.dataset.search = d.name.toLowerCase();
     tr.dataset.interest = list.length ? '1' : '';
+    tr.dataset.trash = trash.has(d.item_id) ? '1' : '';
     return tr;
   });
 
   const applyFilter = () => {
     const term = filter.value.trim().toLowerCase();
     for (const tr of rows) {
-      tr.hidden = (term && !tr.dataset.search.includes(term)) || (onlyInterest.checked && !tr.dataset.interest);
+      tr.hidden = (term && !tr.dataset.search.includes(term)) || (onlyInterest.checked && !tr.dataset.interest)
+        || (onlyTrash.checked && !tr.dataset.trash);
     }
   };
   filter.addEventListener('input', applyFilter);
   onlyInterest.addEventListener('change', applyFilter);
+  onlyTrash.addEventListener('change', applyFilter);
 
   updateRestButton();
   const restBar = restMode && unsold.length ? h('div', { class: 'panel row spread', style: 'margin:10px 0' },
@@ -1013,6 +1119,10 @@ async function viewRun(id) {
     offen: 'Teilnehmer festlegen, Loot einfügen, Interesse anmelden. ★ = automatisch über deine Wunschliste. ' +
       'Beim Würfeln wird die Menge gleichmäßig auf alle Interessenten verteilt, den Rest bekommen die höchsten Würfe. ' +
       `Empfänger zahlen den Partypreis (${pct} %) in die Kasse.`,
+    muell: 'Admins markieren Müll (wird als Müll-Liste der Party gespeichert). Beim Würfeln wird aller Müll ' +
+      'automatisch an NPC verkauft – außer er steht auf der Wunschliste eines Teilnehmers, jemand hat Interesse ' +
+      `eingetragen oder er ist zugewiesen. Interessen können noch geändert werden.${trashToSell.length
+        ? ` Beim Würfeln gehen ${trashToSell.length} Müll-Drop(s) an NPC.` : ''}`,
     abholung: 'Jeder holt seinen Anteil im Guild Storage ab und hakt ihn ab (Admin und Verkäufer können für alle abhaken). ' +
       'Übrige Drops kann jedes Party-Mitglied mit „Nehme ich“ übernehmen – wer zuerst kommt, zahlt den Partypreis. ' +
       'Mit „Verkauf & Rest“ ist Schluss.',
@@ -1022,7 +1132,7 @@ async function viewRun(id) {
     beendet: `Run beendet${run.finished_at ? ' am ' + date(run.finished_at) : ''}.`,
   };
 
-  const sections = status === 'offen'
+  const sections = open
     ? [participantBox, importBox, summary]
     : status === 'auszahlung' || status === 'beendet'
       ? [summary, pickupBox]
@@ -1054,7 +1164,8 @@ async function viewRun(id) {
     sections,
     drops.length ? h('h2', {}, 'Loot') : null,
     drops.length ? h('div', { class: 'row', style: 'margin-bottom:10px' }, filter,
-      h('label', { class: 'row small muted' }, onlyInterest, 'nur mit Empfängern/Interessenten')) : null,
+      h('label', { class: 'row small muted' }, onlyInterest, 'nur mit Empfängern/Interessenten'),
+      trashPhase ? h('label', { class: 'row small muted' }, onlyTrash, 'nur Müll anzeigen') : null) : null,
     table,
   );
 }
