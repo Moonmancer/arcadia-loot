@@ -89,17 +89,18 @@ Fertig:
   (`source = 'nachmeldung'`); `unclaim_drop` solange nicht abgeholt. Ab `verkauf` gesperrt.
 - Rest wird mit der Auszahlung ausgehändigt (012): `set_picked_up` erlaubt Rest-Anteile erst in Phase
   `auszahlung`; Frontend sperrt die Häkchen vorher, Startseite zeigt Rest erst ab Auszahlung.
-- Phase „Müll verkaufen“ (013): Phasen jetzt `offen` → `muell` → (Würfeln) → `abholung` → …; Würfeln
-  (`roll_run`, gibt Anzahl verkaufter Müll-Drops zurück) nur aus `muell`; `set_run_status` nicht über die
-  Würfel-Grenze. Vor dem Würfeln = `offen` oder `muell` (Interessen, Teilnehmer, Drops löschen).
-  `party_trash` = Müll-Liste pro Party (lesen: Mitglieder, ändern: Admins). Beim Würfeln gehen Müll-Drops
-  an NPC, außer Wunschliste eines Teilnehmers (`wishlist_conflicts(run)`), Interesse, Zuweisung, kein NPC-Preis.
-  Frontend: Knopf „Müll“ (Admins, nur in `muell`), Filter „nur Müll“, Warn-Badges, Müll-Liste in der Party.
+- Müll (013 + 014): Phasen `offen` → `muell` („Müll verkauft“) → (Würfeln) → `abholung` → …; Würfeln
+  nur aus `muell`, `set_run_status` nicht über die Würfel-Grenze. Vor dem Würfeln = `offen` oder `muell`.
+  `party_trash` = Müll-Liste pro Party (lesen: Mitglieder, ändern: Admins). Markieren in `offen` (Knopf
+  „Müll“, Filter „nur Müll“, Warn-Badges via `wishlist_conflicts(run)`). `set_run_status(offen→muell)`
+  verkauft Müll ohne Konflikt an NPC (Konflikt: Wunschliste eines Teilnehmers, Interesse, Zuweisung, kein
+  NPC-Preis) und gibt die Anzahl zurück; `muell→offen` macht das rückgängig. Verkaufte Drops nehmen keine
+  Interessen an. Müll-Liste auch in der Party-Ansicht pflegbar.
 - Startseite „Offen bei dir“: eigene nicht abgeholte Anteile (Runs in abholung/verkauf/auszahlung) und
   eigener Saldo in Runs der Phase auszahlung, solange nicht als ausgezahlt markiert. Abrechnung steckt in
   `settle()` in `app.js` und wird von Run-Ansicht und Startseite gemeinsam genutzt.
 - Migrationen lokal mit PGlite getestet (Auth-Stubs).
-- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–013 eingespielt,
+- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–014 eingespielt,
   `sync-arcadia` deployt, Secrets + Vault gesetzt, Items/Icons/Preise geladen, Cron-Jobs aktiv.
   GitHub-Repo `Moonmancer/arcadia-loot` (öffentlich); Pages aktiv (Source: GitHub Actions).
 

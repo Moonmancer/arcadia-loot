@@ -505,7 +505,7 @@ async function viewParty(id) {
 
 const PHASES = ['offen', 'muell', 'abholung', 'verkauf', 'auszahlung', 'beendet'];
 const PHASE_LABEL = {
-  offen: 'Loot & Interessen', muell: 'Müll verkaufen', abholung: 'Abholung', verkauf: 'Verkauf & Rest',
+  offen: 'Loot & Interessen', muell: 'Müll verkauft', abholung: 'Abholung', verkauf: 'Verkauf & Rest',
   auszahlung: 'Auszahlung', beendet: 'Beendet',
 };
 const statusBadge = (status) => h('span', {
@@ -518,7 +518,7 @@ function stepper(status, hasDrops) {
   const steps = [
     ['Erstellt', true],
     ['Loot befüllt', hasDrops],
-    ['Müll verkaufen', phase >= 2],
+    ['Müll verkauft', phase >= 2],
     ['Ausgewürfelt', phase >= 2],
     ['Abholung', phase > 2],
     ['Verkauf & Rest', phase > 3],
@@ -551,8 +551,8 @@ async function viewRun(id) {
   // Historie der letzten 10 Runs: was wurde mit übrigen Items gemacht → Vorbelegung in „Verkauf & Rest“
   const trends = run.status === 'verkauf' ? await q(sb.rpc('leftover_trends', { p_run: id })) : [];
   const trendBy = new Map(trends.map((t) => [t.item_id, t]));
-  // Müll-Liste der Party und Wunschlisten-Konflikte (nur in „Müll verkaufen“ gebraucht)
-  const [trashRows, conflicts] = run.status === 'muell'
+  // Müll-Liste der Party und Wunschlisten-Konflikte (Müll wird in „Loot & Interessen“ markiert)
+  const [trashRows, conflicts] = run.status === 'offen'
     ? await Promise.all([
         q(sb.from('party_trash').select('item_id').eq('party_id', run.party_id)),
         q(sb.rpc('wishlist_conflicts', { p_run: id })),
@@ -563,7 +563,7 @@ async function viewRun(id) {
 
   const status = run.status;
   const open = status === 'offen' || status === 'muell';          // vor dem Würfeln
-  const trashPhase = status === 'muell';
+  const trashPhase = status === 'offen';                          // Müll markieren
   const finished = status === 'beendet';
   const myRole = members.find((m) => m.user_id === me.id)?.role;
   const isAdmin = myRole === 'admin';
@@ -602,20 +602,32 @@ async function viewRun(id) {
   // ----- Kopf mit Phasen-Aktionen -----
   const phaseButtons = [];
   if (status === 'offen' && canAdvance && drops.length) {
-    phaseButtons.push(h('button', { class: 'primary', onclick: changeStatus('muell') }, 'Weiter: Müll verkaufen →'));
-  }
-  if (trashPhase && canAdvance) {
-    phaseButtons.push(h('button', { class: 'small', onclick: changeStatus('offen') }, `← ${PHASE_LABEL.offen}`));
-  }
-  if (trashPhase && canManage) {
     phaseButtons.push(h('button', {
       class: 'primary',
       onclick: action(async () => {
         const sum = trashToSell.reduce((s, d) => s + d.amount * npcSell(d.npc_price), 0);
-        const trashText = trashToSell.length ? ` ${trashToSell.length} Müll-Drop(s) werden für ${zeny(sum)} an NPC verkauft.` : '';
-        if (!confirm(`Jetzt würfeln?${trashText} Danach können keine Interessen mehr geändert werden.`)) return;
-        const n = await q(sb.rpc('roll_run', { p_run: id }));
-        toast(n ? `Gewürfelt – ${n} Müll-Drop(s) an NPC verkauft` : 'Gewürfelt – Abholung beginnt');
+        if (!confirm(trashToSell.length
+          ? `${trashToSell.length} Müll-Drop(s) für ${zeny(sum)} an NPC verkaufen und weiter?`
+          : 'Kein Müll zu verkaufen. Trotzdem weiter?')) return;
+        const n = await q(sb.rpc('set_run_status', { p_run: id, p_status: 'muell' }));
+        toast(n ? `${n} Müll-Drop(s) an NPC verkauft` : 'Weiter – kein Müll verkauft');
+        rerender();
+      }),
+    }, 'Weiter: Müll verkaufen →'));
+  }
+  if (status === 'muell' && canAdvance) {
+    phaseButtons.push(h('button', {
+      class: 'small',
+      onclick: changeStatus('offen', 'Zurück zu „Loot & Interessen“? Die Müll-Verkäufe werden rückgängig gemacht.'),
+    }, `← ${PHASE_LABEL.offen}`));
+  }
+  if (status === 'muell' && canManage) {
+    phaseButtons.push(h('button', {
+      class: 'primary',
+      onclick: action(async () => {
+        if (!confirm('Jetzt würfeln? Danach können keine Interessen mehr geändert werden.')) return;
+        await q(sb.rpc('roll_run', { p_run: id }));
+        toast('Gewürfelt – Abholung beginnt');
         rerender();
       }),
     }, 'Auswürfeln'));
@@ -875,11 +887,9 @@ async function viewRun(id) {
     }));
     if (isRest) chips.prepend(h('span', { class: 'badge', style: 'margin:0 4px 0 0' }, 'Rest'));
     if (!list.length) {
-      chips.append(open
-        ? h('span', { class: 'muted small' }, '–')
-        : d.sold_price != null
-          ? h('span', { class: 'chip win' }, `${d.sold_to_npc ? 'an NPC verkauft' : 'verkauft'} ${zeny(d.sold_price)}`)
-          : h('span', { class: 'muted small' }, 'übrig'));
+      chips.append(d.sold_price != null
+        ? h('span', { class: 'chip win' }, `${d.sold_to_npc ? 'an NPC verkauft' : 'verkauft'} ${zeny(d.sold_price)}`)
+        : open ? h('span', { class: 'muted small' }, '–') : h('span', { class: 'muted small' }, 'übrig'));
     }
 
     const priceCell = h('td', { class: 'num hide-sm' },
@@ -900,7 +910,7 @@ async function viewRun(id) {
       }, '📈') : null);
 
     const actions = [];
-    if (open && !assigned && amParticipant) {
+    if (open && !assigned && d.sold_price == null && amParticipant) {
       actions.push(h('button', { class: 'small' + (mine ? ' on' : ''), onclick: toggleInterest(d, mine) }, mine ? 'Will ich ✓' : 'Will ich'));
     }
     // Nachmelden während der Abholung: wer zuerst kommt, übernimmt den Drop zum Partypreis
@@ -1118,12 +1128,12 @@ async function viewRun(id) {
 
   const hints = {
     offen: 'Teilnehmer festlegen, Loot einfügen, Interesse anmelden. ★ = automatisch über deine Wunschliste. ' +
-      'Beim Würfeln wird die Menge gleichmäßig auf alle Interessenten verteilt, den Rest bekommen die höchsten Würfe. ' +
+      'Admins markieren Müll (Müll-Liste der Party). Mit „Weiter: Müll verkaufen“ geht aller Müll an NPC – außer er ' +
+      'steht auf der Wunschliste eines Teilnehmers, jemand hat Interesse eingetragen oder er ist zugewiesen.' +
+      (trashToSell.length ? ` Aktuell ${trashToSell.length} Müll-Drop(s).` : ''),
+    muell: 'Müll ist an NPC verkauft. Interessen können noch geändert werden, dann wird ausgewürfelt: ' +
+      'Die Menge wird gleichmäßig auf alle Interessenten verteilt, den Rest bekommen die höchsten Würfe. ' +
       `Empfänger zahlen den Partypreis (${pct} %) in die Kasse.`,
-    muell: 'Admins markieren Müll (wird als Müll-Liste der Party gespeichert). Beim Würfeln wird aller Müll ' +
-      'automatisch an NPC verkauft – außer er steht auf der Wunschliste eines Teilnehmers, jemand hat Interesse ' +
-      `eingetragen oder er ist zugewiesen. Interessen können noch geändert werden.${trashToSell.length
-        ? ` Beim Würfeln gehen ${trashToSell.length} Müll-Drop(s) an NPC.` : ''}`,
     abholung: 'Jeder holt seinen Anteil im Guild Storage ab und hakt ihn ab (Admin und Verkäufer können für alle abhaken). ' +
       'Übrige Drops kann jedes Party-Mitglied mit „Nehme ich“ übernehmen – wer zuerst kommt, zahlt den Partypreis. ' +
       'Mit „Verkauf & Rest“ ist Schluss.',
