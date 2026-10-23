@@ -201,7 +201,7 @@ async function viewParty(id) {
   const runList = runs.length
     ? h('ul', { class: 'list' }, runs.map((r) => h('li', {},
         h('a', { href: `#/run/${r.id}` }, r.title),
-        r.status === 'offen' ? h('span', { class: 'badge warn' }, 'offen') : h('span', { class: 'badge good' }, 'gewürfelt'),
+        statusBadge(r.status),
         h('span', { class: 'muted small', style: 'margin-left:auto' }, `${r.drops[0]?.count ?? 0} Drops · ${date(r.created_at)}`),
       )))
     : h('p', { class: 'muted' }, 'Noch keine Runs.');
@@ -334,29 +334,61 @@ async function viewParty(id) {
 
 // ---------- Run ----------
 
+const PHASES = ['offen', 'abholung', 'verkauf', 'auszahlung', 'beendet'];
+const PHASE_LABEL = {
+  offen: 'Loot & Interessen', abholung: 'Abholung', verkauf: 'Verkauf & Rest', auszahlung: 'Auszahlung', beendet: 'Beendet',
+};
+const statusBadge = (status) => h('span', { class: 'badge ' + (status === 'beendet' ? '' : status === 'offen' ? 'warn' : 'good') },
+  PHASE_LABEL[status]);
+
+// Fortschrittsleiste: Erstellen → Loot → Würfeln → Abholung → Verkauf/Rest → Auszahlung → Beendet
+function stepper(status, hasDrops) {
+  const phase = PHASES.indexOf(status);
+  const steps = [
+    ['Erstellt', true],
+    ['Loot befüllt', hasDrops],
+    ['Ausgewürfelt', phase >= 1],
+    ['Abholung', phase > 1],
+    ['Verkauf & Rest', phase > 2],
+    ['Auszahlung', phase > 3],
+    ['Beendet', phase >= 4],
+  ];
+  const current = status === 'offen' ? (hasDrops ? 2 : 1) : status === 'beendet' ? 6 : phase + 2;
+  return h('ol', { class: 'stepper' }, steps.map(([label, done], i) =>
+    h('li', { class: i === current ? 'current' : done ? 'done' : '' }, label)));
+}
+
 async function viewRun(id) {
   id = Number(id);
   const run = await q(sb.from('runs')
-    .select('id, title, status, created_by, created_at, rolled_at, party_id, parties(name, party_price_pct)')
+    .select('id, title, status, created_by, created_at, rolled_at, finished_at, party_id, parties(name, party_price_pct)')
     .eq('id', id).maybeSingle());
   if (!run) return h('p', { class: 'muted' }, 'Run nicht gefunden oder kein Zugriff.');
 
-  const [drops, interests, members, wishlist] = await Promise.all([
+  // interests und run_participants haben je zwei FKs auf profiles → Beziehung explizit benennen
+  const [drops, interests, members, participants, wishlist] = await Promise.all([
     q(sb.from('drop_overview').select('*').eq('run_id', id).order('pos')),
-    q(sb.from('interests').select('drop_id, user_id, roll, share, source, profiles(display_name), drops!inner(run_id)')
+    q(sb.from('interests')
+      .select('drop_id, user_id, roll, share, source, picked_up_at, profiles!interests_user_id_fkey(display_name), drops!inner(run_id)')
       .eq('drops.run_id', id)),
     q(sb.from('party_members').select('user_id, role, profiles(display_name)').eq('party_id', run.party_id)),
+    q(sb.from('run_participants').select('user_id, paid_at, profiles!run_participants_user_id_fkey(display_name)').eq('run_id', id)),
     q(sb.from('wishlist').select('item_id')),
   ]);
 
-  const open = run.status === 'offen';
+  const status = run.status;
+  const open = status === 'offen';
+  const finished = status === 'beendet';
   const myRole = members.find((m) => m.user_id === me.id)?.role;
   const isAdmin = myRole === 'admin';
   const isSeller = isAdmin || myRole === 'verkaeufer';
   const canManage = run.created_by === me.id || isAdmin;
+  const canAdvance = canManage || isSeller;
+  const amParticipant = participants.some((p) => p.user_id === me.id);
   const pct = run.parties.party_price_pct;
-  members.sort(byRoleAndName);
+  participants.sort((a, b) => a.profiles.display_name.localeCompare(b.profiles.display_name));
   const wished = new Set(wishlist.map((w) => w.item_id));
+  const dropById = new Map(drops.map((d) => [d.id, d]));
   const byDrop = new Map();
   for (const i of interests) {
     if (!byDrop.has(i.drop_id)) byDrop.set(i.drop_id, []);
@@ -371,13 +403,87 @@ async function viewRun(id) {
   const value = (d, amount = d.amount) => (unit(d) != null ? unit(d) * amount : null);
   const partyPrice = (d, amount = d.amount) => (unit(d) != null ? Math.round(unit(d) * amount * pct / 100) : null);
   const total = drops.reduce((s, d) => s + (value(d) ?? 0), 0);
+  const leftovers = drops.filter((d) => !byDrop.has(d.id));          // ohne Empfänger
+  const unsold = leftovers.filter((d) => d.sold_price == null);
+  const handouts = interests.filter((i) => i.share > 0 && !(open && dropById.get(i.drop_id)?.assigned_to == null));
 
-  // Import
+  const changeStatus = (to, question) => action(async () => {
+    if (question && !confirm(question)) return;
+    await q(sb.rpc('set_run_status', { p_run: id, p_status: to }));
+    rerender();
+  });
+
+  // ----- Kopf mit Phasen-Aktionen -----
+  const phaseButtons = [];
+  if (open && canManage && drops.length) {
+    phaseButtons.push(h('button', {
+      class: 'primary',
+      onclick: action(async () => {
+        if (!confirm('Jetzt würfeln? Danach können keine Interessen mehr geändert werden.')) return;
+        await q(sb.rpc('roll_run', { p_run: id }));
+        toast('Gewürfelt – Abholung beginnt');
+        rerender();
+      }),
+    }, 'Auswürfeln'));
+  }
+  if (canAdvance && !open) {
+    const i = PHASES.indexOf(status);
+    if (i > 1) phaseButtons.push(h('button', { class: 'small', onclick: changeStatus(PHASES[i - 1]) }, `← ${PHASE_LABEL[PHASES[i - 1]]}`));
+    const openPickups = handouts.filter((x) => !x.picked_up_at).length;
+    if (status === 'abholung') {
+      phaseButtons.push(h('button', {
+        class: 'primary',
+        onclick: changeStatus('verkauf', openPickups ? `${openPickups} Anteil(e) noch nicht abgeholt. Trotzdem weiter zu Verkauf & Rest?` : null),
+      }, 'Weiter: Verkauf & Rest →'));
+    } else if (status === 'verkauf') {
+      const warn = [unsold.length && `${unsold.length} Drop(s) weder verkauft noch aufgeteilt`,
+        openPickups && `${openPickups} Anteil(e) nicht abgeholt`].filter(Boolean).join(', ');
+      phaseButtons.push(h('button', {
+        class: 'primary',
+        onclick: changeStatus('auszahlung', warn ? `${warn}. Trotzdem weiter zur Auszahlung?` : null),
+      }, 'Weiter: Auszahlung →'));
+    } else if (status === 'auszahlung') {
+      const unpaid = participants.filter((p) => !p.paid_at).length;
+      phaseButtons.push(h('button', {
+        class: 'primary',
+        onclick: changeStatus('beendet', unpaid ? `${unpaid} Teilnehmer noch nicht ausgezahlt. Run trotzdem beenden?` : 'Run beenden?'),
+      }, 'Run beenden'));
+    }
+  }
+
+  // ----- Teilnehmer (Phase offen) -----
+  let participantBox = null;
+  if (open) {
+    const partIds = new Set(participants.map((p) => p.user_id));
+    const sorted = [...members].sort((a, b) => a.profiles.display_name.localeCompare(b.profiles.display_name));
+    participantBox = h('div', { class: 'panel', style: 'margin:14px 0' },
+      h('div', { class: 'row spread' },
+        h('strong', {}, `Teilnehmer (${participants.length})`),
+        h('span', { class: 'muted small' }, canManage ? 'Wer war beim Run dabei? Nur Teilnehmer bekommen Loot und Anteile.' : '')),
+      h('div', { class: 'chips', style: 'margin-top:8px' }, sorted.map((m) => {
+        const on = partIds.has(m.user_id);
+        if (!canManage) return on ? h('span', { class: 'chip' + (m.user_id === me.id ? ' me' : '') }, m.profiles.display_name) : null;
+        return h('button', {
+          class: 'chip toggle' + (on ? ' win' : ' lose'),
+          title: on ? 'Als Teilnehmer entfernen' : 'Als Teilnehmer hinzufügen',
+          onclick: action(async () => {
+            if (on) await q(sb.from('run_participants').delete().eq('run_id', id).eq('user_id', m.user_id));
+            else await q(sb.from('run_participants').insert({ run_id: id, user_id: m.user_id }));
+            rerender();
+          }),
+        }, (on ? '✓ ' : '+ ') + m.profiles.display_name);
+      })),
+      !amParticipant ? h('p', { class: 'small', style: 'color:var(--accent);margin:8px 0 0' },
+        'Du bist kein Teilnehmer dieses Runs und kannst kein Interesse anmelden.') : null,
+    );
+  }
+
+  // ----- Import -----
   let importBox = null;
   if (open && canManage) {
     const text = h('textarea', { placeholder: 'Guild-Storage-Liste hier einfügen (ID, Name, Amount, Attributes, Cards – tab-getrennt)' });
-    importBox = h('details', { class: 'panel', open: drops.length === 0 },
-      h('summary', {}, drops.length ? 'Weitere Liste einfügen' : 'Liste einfügen'),
+    importBox = h('details', { class: 'panel', open: drops.length === 0, style: 'margin:14px 0' },
+      h('summary', {}, drops.length ? 'Weitere Liste einfügen' : 'Loot einfügen'),
       h('div', { class: 'stack', style: 'margin-top:10px' },
         text,
         h('button', {
@@ -392,17 +498,48 @@ async function viewRun(id) {
       ));
   }
 
-  // Würfeln
-  const rollBtn = open && canManage && drops.length > 0 && h('button', {
-    class: 'primary',
-    onclick: action(async () => {
-      if (!confirm('Jetzt würfeln? Danach können keine Interessen mehr geändert werden.')) return;
-      await q(sb.rpc('roll_run', { p_run: id }));
-      toast('Gewürfelt!');
+  // ----- Ausgabe / Abholung -----
+  const pickToggle = (i) => {
+    const allowed = !finished && (i.user_id === me.id || isSeller) && status !== 'offen';
+    const box = h('input', { type: 'checkbox', disabled: !allowed });
+    box.checked = !!i.picked_up_at;
+    box.addEventListener('change', async () => {
+      try {
+        await q(sb.rpc('set_picked_up', { p_drop: i.drop_id, p_user: i.user_id, p_done: box.checked }));
+      } catch (e) { toast(e.message, true); }
       rerender();
-    }),
-  }, 'Würfeln');
+    });
+    return box;
+  };
 
+  let pickupBox = null;
+  if (!open && handouts.length) {
+    const byUser = new Map();
+    for (const i of handouts) {
+      if (!byUser.has(i.user_id)) byUser.set(i.user_id, { name: i.profiles.display_name, list: [] });
+      byUser.get(i.user_id).list.push(i);
+    }
+    const done = handouts.filter((i) => i.picked_up_at).length;
+    pickupBox = h('div', {},
+      h('h2', {}, `Ausgabe (${done}/${handouts.length} abgeholt)`),
+      h('div', { class: 'cards' }, [...byUser.entries()]
+        .sort((a, b) => (a[0] === me.id ? -1 : b[0] === me.id ? 1 : a[1].name.localeCompare(b[1].name)))
+        .map(([uid, u]) => {
+          const all = u.list.every((i) => i.picked_up_at);
+          return h('div', { class: 'panel', style: uid === me.id ? 'border-color:var(--accent)' : '' },
+            h('div', { class: 'row spread' }, h('strong', {}, u.name),
+              all ? h('span', { class: 'badge good' }, 'alles abgeholt') : h('span', { class: 'badge warn' }, 'offen')),
+            h('ul', { class: 'list' }, u.list.map((i) => h('li', { class: 'small' },
+              h('label', { class: 'row', style: 'flex-wrap:nowrap' }, pickToggle(i),
+                `${zenyFmt.format(i.share)}× ${dropById.get(i.drop_id).name}`,
+                i.source === 'rest' ? h('span', { class: 'badge' }, 'Rest') : null),
+            ))),
+          );
+        })),
+    );
+  }
+
+  // ----- Aktionen in der Tabelle -----
   const toggleInterest = (d, mine) => action(async () => {
     if (mine) await q(sb.from('interests').delete().eq('drop_id', d.id).eq('user_id', me.id));
     else await q(sb.from('interests').insert({ drop_id: d.id }));
@@ -431,7 +568,7 @@ async function viewRun(id) {
   const assignSelect = (d) => {
     const sel = h('select', { title: 'Direkt zuweisen (wird nicht gewürfelt)' },
       h('option', { value: '' }, open ? 'würfeln' : '– niemand –'),
-      members.map((m) => h('option', { value: m.user_id }, '→ ' + m.profiles.display_name)));
+      participants.map((p) => h('option', { value: p.user_id }, '→ ' + p.profiles.display_name)));
     sel.value = d.assigned_to ?? '';
     sel.addEventListener('change', async () => {
       try {
@@ -443,7 +580,6 @@ async function viewRun(id) {
   };
 
   const saleControl = (d) => {
-    if (!isSeller) return d.sold_price != null ? zeny(d.sold_price) : null;
     const inp = h('input', { type: 'text', inputmode: 'numeric', placeholder: 'Erlös', style: 'width:110px;flex:none',
       value: d.sold_price != null ? zenyFmt.format(d.sold_price) : '' });
     const save = action(async () => {
@@ -455,6 +591,25 @@ async function viewRun(id) {
     return h('div', { class: 'row', style: 'flex-wrap:nowrap' }, inp, h('button', { class: 'small', onclick: save }, '✓'));
   };
 
+  // Rest-Auswahl (Phase Verkauf)
+  const restPick = new Set();
+  const restMode = status === 'verkauf' && isSeller;
+  const restButton = h('button', {
+    class: 'primary', disabled: true,
+    onclick: action(async () => {
+      const n = restPick.size;
+      if (!confirm(`${n} Drop(s) gratis und zufällig an die ${participants.length} Teilnehmer verteilen? Jeder Eintrag geht komplett an eine Person.`)) return;
+      await q(sb.rpc('split_rest', { p_run: id, p_drops: [...restPick] }));
+      toast(`${n} Drop(s) aufgeteilt`);
+      rerender();
+    }),
+  }, 'Ausgewählte zufällig verteilen');
+  const restBoxes = [];
+  const updateRestButton = () => {
+    restButton.disabled = restPick.size === 0;
+    restButton.textContent = restPick.size ? `${restPick.size} zufällig verteilen` : 'Ausgewählte zufällig verteilen';
+  };
+
   // Filter
   const filter = h('input', { type: 'search', placeholder: 'Filtern …' });
   const onlyInterest = h('input', { type: 'checkbox' });
@@ -463,35 +618,55 @@ async function viewRun(id) {
     const list = byDrop.get(d.id) || [];
     const mine = list.some((i) => i.user_id === me.id);
     const assigned = d.assigned_to != null;
-    const chips = h('div', { class: 'chips' }, list.map((i) => {
-      const done = !open || assigned;
-      const cls = ['chip', i.user_id === me.id && 'me', done && (i.share > 0 ? 'win' : 'lose')].filter(Boolean).join(' ');
+    const isRest = list.some((i) => i.source === 'rest');
+    const chips = h('div', { class: 'chips' }, list.filter((i) => !isRest || i.share > 0).map((i) => {
+      const settled = !open || assigned;
+      const cls = ['chip', i.user_id === me.id && 'me', settled && (i.share > 0 ? 'win' : 'lose')].filter(Boolean).join(' ');
       let label = i.profiles.display_name;
       if (i.source === 'zuweisung') label += ` → ${i.share}× (zugewiesen)`;
+      else if (i.source === 'rest') label += ` ${i.share}×`;
       else if (!open) label += ` ${i.roll}` + (d.amount > 1 ? ` → ${i.share}×` : '');
       else if (i.source === 'wunschliste') label += ' ★';
-      return h('span', { class: cls, title: i.source === 'wunschliste' ? 'über Wunschliste' : '' }, label);
+      if (i.picked_up_at) label += ' ✓';
+      return h('span', { class: cls, title: i.picked_up_at ? 'abgeholt' : i.source === 'wunschliste' ? 'über Wunschliste' : '' }, label);
     }));
+    if (isRest) chips.prepend(h('span', { class: 'badge', style: 'margin:0 4px 0 0' }, 'Rest'));
     if (!list.length) {
       chips.append(open
         ? h('span', { class: 'muted small' }, '–')
         : d.sold_price != null
           ? h('span', { class: 'chip win' }, `verkauft ${zeny(d.sold_price)}`)
-          : h('span', { class: 'muted small' }, 'verkaufen'));
+          : h('span', { class: 'muted small' }, 'übrig'));
     }
 
     const priceCell = h('td', { class: 'num hide-sm' },
       d.price_override != null
         ? h('span', { title: 'Vom Admin festgelegt' }, zeny(d.price_override), h('span', { class: 'badge warn' }, 'fest'))
         : d.is_plain ? zeny(unitPrice(d)) : h('span', { class: 'muted', title: 'Marktpreis gilt nur für normale Items' }, zeny(unitPrice(d))),
-      isAdmin ? h('button', { class: 'link small', title: 'Preis überschreiben', onclick: editPrice(d) }, '✎') : null);
+      isAdmin && ['offen', 'abholung', 'verkauf'].includes(status)
+        ? h('button', { class: 'link small', title: 'Preis überschreiben', onclick: editPrice(d) }, '✎') : null);
 
     const actions = [];
-    if (open && !assigned) {
+    if (open && !assigned && amParticipant) {
       actions.push(h('button', { class: 'small' + (mine ? ' on' : ''), onclick: toggleInterest(d, mine) }, mine ? 'Will ich ✓' : 'Will ich'));
     }
-    if (!open && !list.length && (isSeller || d.sold_price != null)) actions.push(saleControl(d));
-    if (isAdmin) actions.push(assignSelect(d));
+    if (['abholung', 'verkauf'].includes(status) && !list.length && isSeller) actions.push(saleControl(d));
+    if (restMode && !list.length && d.sold_price == null) {
+      const box = h('input', { type: 'checkbox', title: 'Für zufällige Aufteilung auswählen' });
+      box.addEventListener('change', () => { box.checked ? restPick.add(d.id) : restPick.delete(d.id); updateRestButton(); });
+      restBoxes.push([box, d.id]);
+      actions.push(h('label', { class: 'row small muted', style: 'flex-wrap:nowrap' }, box, 'Rest'));
+    }
+    if (restMode && isRest) {
+      actions.push(h('button', {
+        class: 'small',
+        onclick: action(async () => {
+          await q(sb.rpc('undo_rest', { p_drop: d.id }));
+          rerender();
+        }),
+      }, 'Aufteilung zurück'));
+    }
+    if (isAdmin && ['offen', 'abholung', 'verkauf'].includes(status) && !isRest) actions.push(assignSelect(d));
     if (open && canManage) {
       actions.push(h('button', {
         class: 'link small', title: 'Drop löschen',
@@ -520,7 +695,7 @@ async function viewRun(id) {
       h('td', { class: 'num' }, zenyFmt.format(d.amount)),
       priceCell,
       h('td', { class: 'num hide-sm' }, zeny(value(d))),
-      h('td', { class: 'num' }, zeny(partyPrice(d))),
+      h('td', { class: 'num' }, isRest ? h('span', { class: 'muted', title: 'Rest ist gratis' }, 'gratis') : zeny(partyPrice(d))),
       h('td', {}, chips),
       h('td', {}, actions.length ? h('div', { class: 'row', style: 'flex-wrap:nowrap' }, actions) : null),
     );
@@ -538,6 +713,17 @@ async function viewRun(id) {
   filter.addEventListener('input', applyFilter);
   onlyInterest.addEventListener('change', applyFilter);
 
+  const restBar = restMode && unsold.length ? h('div', { class: 'panel row spread', style: 'margin:10px 0' },
+    h('span', { class: 'small' },
+      `${unsold.length} Drop(s) übrig: Erlös eintragen, wenn verkauft – oder als „Rest“ auswählen und gratis zufällig verteilen (jeder Eintrag komplett an eine Person, reihum gleichmäßig).`),
+    h('div', { class: 'row' },
+      h('button', {
+        class: 'small',
+        onclick: () => { for (const [box, did] of restBoxes) { box.checked = true; restPick.add(did); } updateRestButton(); },
+      }, 'Alle übrigen auswählen'),
+      restButton),
+  ) : null;
+
   const table = drops.length
     ? h('div', { class: 'table-wrap' }, h('table', {},
         h('thead', {}, h('tr', {},
@@ -548,43 +734,56 @@ async function viewRun(id) {
         )),
         h('tbody', {}, rows),
       ))
-    : h('p', { class: 'muted' }, 'Noch keine Drops.');
+    : h('p', { class: 'muted' }, 'Noch kein Loot.');
 
-  // Abrechnung: Empfänger zahlen den Partypreis in die Kasse, Kasse + Verkäufe werden geteilt
+  // ----- Abrechnung: Empfänger zahlen den Partypreis, Kasse + Verkäufe gehen an die Teilnehmer -----
   let summary = null;
-  const settled = drops.filter((d) => !open || d.assigned_to != null);
-  if (drops.length && settled.length) {
-    const people = new Map(members.map((m) => [m.user_id, { name: m.profiles.display_name, items: [], pays: 0 }]));
+  if (drops.length && handouts.length) {
+    const people = new Map(participants.map((p) => [p.user_id, { name: p.profiles.display_name, items: [], pays: 0, paid_at: p.paid_at }]));
     let pot = 0;
     let missingPrice = 0;
-    for (const i of interests) {
-      const d = drops.find((x) => x.id === i.drop_id);
-      if (!i.share || (open && d.assigned_to == null)) continue;
+    for (const i of handouts) {
+      const d = dropById.get(i.drop_id);
       const p = people.get(i.user_id) ?? { name: i.profiles.display_name, items: [], pays: 0 };
       people.set(i.user_id, p);
-      p.items.push(`${i.share}× ${d.name}`);
+      p.items.push(`${i.share}× ${d.name}` + (i.source === 'rest' ? ' (Rest)' : ''));
+      if (i.source === 'rest') continue;                       // Rest ist gratis
       const pp = partyPrice(d, i.share);
       if (pp == null) missingPrice++;
       p.pays += pp ?? 0;
       pot += pp ?? 0;
     }
-    const sold = open ? [] : drops.filter((d) => !byDrop.has(d.id) && d.sold_price != null);
-    const unsold = open ? [] : drops.filter((d) => !byDrop.has(d.id) && d.sold_price == null);
+    const sold = leftovers.filter((d) => d.sold_price != null);
     const sales = sold.reduce((s, d) => s + d.sold_price, 0);
-    const shareEach = members.length ? Math.floor((pot + sales) / members.length) : 0;
-
-    const rowsSum = [...people.entries()].map(([uid, p]) => ({ uid, ...p, gets: members.some((m) => m.user_id === uid) ? shareEach : 0 }))
+    const shareEach = participants.length ? Math.floor((pot + sales) / participants.length) : 0;
+    const partIds = new Set(participants.map((p) => p.user_id));
+    const rowsSum = [...people.entries()]
+      .map(([uid, p]) => ({ uid, ...p, gets: partIds.has(uid) ? shareEach : 0 }))
       .map((p) => ({ ...p, saldo: p.gets - p.pays }))
       .sort((a, b) => a.saldo - b.saldo);
+    const showPaid = ['auszahlung', 'beendet'].includes(status);
+
+    const paidToggle = (p) => {
+      if (!partIds.has(p.uid)) return null;
+      const box = h('input', { type: 'checkbox', disabled: !(isSeller && status === 'auszahlung') });
+      box.checked = !!p.paid_at;
+      box.addEventListener('change', async () => {
+        try {
+          await q(sb.rpc('set_paid', { p_run: id, p_user: p.uid, p_done: box.checked }));
+        } catch (e) { toast(e.message, true); }
+        rerender();
+      });
+      return box;
+    };
 
     summary = h('div', {},
       h('h2', {}, open ? 'Abrechnung (bisher zugewiesen)' : 'Abrechnung'),
       h('div', { class: 'cards', style: 'margin-bottom:10px' },
         h('div', { class: 'panel' }, h('div', { class: 'muted small' }, 'Kasse aus Partypreisen'), h('strong', {}, zeny(pot))),
         h('div', { class: 'panel' }, h('div', { class: 'muted small' }, `Verkäufe (${sold.length})`), h('strong', {}, zeny(sales))),
-        h('div', { class: 'panel' }, h('div', { class: 'muted small' }, `Anteil pro Mitglied (${members.length})`), h('strong', {}, zeny(shareEach))),
-        unsold.length ? h('div', { class: 'panel' },
-          h('div', { class: 'muted small' }, `Noch zu verkaufen (${unsold.length})`),
+        h('div', { class: 'panel' }, h('div', { class: 'muted small' }, `Anteil pro Teilnehmer (${participants.length})`), h('strong', {}, zeny(shareEach))),
+        !open && unsold.length ? h('div', { class: 'panel' },
+          h('div', { class: 'muted small' }, `Noch übrig (${unsold.length})`),
           h('strong', {}, '≈ ' + zeny(unsold.reduce((s, d) => s + (value(d) ?? 0), 0)))) : null,
       ),
       missingPrice ? h('p', { class: 'small', style: 'color:var(--accent)' },
@@ -592,7 +791,8 @@ async function viewRun(id) {
       h('div', { class: 'table-wrap' }, h('table', {},
         h('thead', {}, h('tr', {},
           h('th', {}, 'Spieler'), h('th', { class: 'hide-sm' }, 'Items'),
-          h('th', { class: 'num' }, 'Zahlt'), h('th', { class: 'num' }, 'Erhält'), h('th', { class: 'num' }, 'Saldo'))),
+          h('th', { class: 'num' }, 'Zahlt'), h('th', { class: 'num' }, 'Erhält'), h('th', { class: 'num' }, 'Saldo'),
+          showPaid ? h('th', {}, 'Ausgezahlt') : null)),
         h('tbody', {}, rowsSum.map((p) => h('tr', {},
           h('td', {}, p.uid === me.id ? h('strong', {}, p.name) : p.name),
           h('td', { class: 'small muted hide-sm' }, p.items.join(', ') || '–'),
@@ -600,22 +800,38 @@ async function viewRun(id) {
           h('td', { class: 'num' }, zeny(p.gets)),
           h('td', { class: 'num', style: `color:var(${p.saldo < 0 ? '--bad' : '--good'})` },
             (p.saldo > 0 ? '+' : '') + zeny(p.saldo)),
+          showPaid ? h('td', {}, paidToggle(p)) : null,
         ))),
       )),
       h('p', { class: 'muted small' },
-        'Negativer Saldo: an die Kasse zahlen. Positiver Saldo: bekommt Zeny aus der Kasse. ' +
-        (unsold.length ? 'Noch nicht verkaufte Drops sind nicht enthalten.' : '')),
+        'Negativer Saldo: an die Kasse zahlen. Positiver Saldo: bekommt Zeny aus der Kasse. Rest-Items sind gratis. ' +
+        (!open && unsold.length ? 'Noch übrige Drops sind nicht enthalten.' : '')),
     );
   }
+
+  const hints = {
+    offen: 'Teilnehmer festlegen, Loot einfügen, Interesse anmelden. ★ = automatisch über deine Wunschliste. ' +
+      'Beim Würfeln wird die Menge gleichmäßig auf alle Interessenten verteilt, den Rest bekommen die höchsten Würfe. ' +
+      `Empfänger zahlen den Partypreis (${pct} %) in die Kasse.`,
+    abholung: 'Jeder holt seinen Anteil im Guild Storage ab und hakt ihn ab (Admin und Verkäufer können für alle abhaken).',
+    verkauf: 'Übrige Drops verkaufen (Erlös eintragen) oder nützlichen Rest gratis und zufällig an die Teilnehmer verteilen – jeder Eintrag geht komplett an eine Person.',
+    auszahlung: 'Kasse und Verkäufe werden ausgezahlt. Admin oder Verkäufer haken pro Teilnehmer „Ausgezahlt“ ab.',
+    beendet: `Run beendet${run.finished_at ? ' am ' + date(run.finished_at) : ''}.`,
+  };
+
+  const sections = status === 'offen'
+    ? [participantBox, importBox, summary]
+    : status === 'auszahlung' || status === 'beendet'
+      ? [summary, pickupBox]
+      : [pickupBox, restBar, summary];
 
   return h('div', {},
     h('p', { class: 'small' }, h('a', { href: `#/party/${run.party_id}` }, '← ' + run.parties.name)),
     h('div', { class: 'row spread' },
       h('div', {},
-        h('h1', {}, run.title,
-          open ? h('span', { class: 'badge warn' }, 'offen') : h('span', { class: 'badge good' }, 'gewürfelt')),
+        h('h1', {}, run.title, statusBadge(status)),
         h('div', { class: 'muted small' },
-          `${drops.length} Drops · Marktwert ≈ ${zeny(total)} · Partypreis ${pct} %`
+          `${drops.length} Drops · Marktwert ≈ ${zeny(total)} · Partypreis ${pct} % · ${participants.length} Teilnehmer`
           + (run.rolled_at ? ` · gewürfelt ${date(run.rolled_at)}` : '')),
       ),
       h('div', { class: 'row' },
@@ -627,17 +843,15 @@ async function viewRun(id) {
             location.hash = `#/party/${run.party_id}`;
           }),
         }, 'Run löschen') : null,
-        rollBtn,
+        phaseButtons,
       ),
     ),
-    open ? h('p', { class: 'muted small' },
-      'Markiere, was du willst. ★ = automatisch über deine Wunschliste; „☆ Wunschliste" setzt ein Item für alle künftigen Runs darauf. ' +
-      'Beim Würfeln wird die Menge gleichmäßig auf alle Interessenten verteilt, den Rest bekommen die höchsten Würfe. ' +
-      `Wer ein Item bekommt, zahlt den Partypreis (${pct} %) in die Kasse; Kasse und Verkäufe werden auf alle Mitglieder geteilt.`) : null,
-    importBox ? h('div', { style: 'margin:14px 0' }, importBox) : null,
-    summary,
-    drops.length ? h('div', { class: 'row', style: 'margin:18px 0 10px' }, filter,
-      h('label', { class: 'row small muted' }, onlyInterest, 'nur mit Interessenten')) : null,
+    stepper(status, drops.length > 0),
+    h('p', { class: 'muted small' }, hints[status]),
+    sections,
+    drops.length ? h('h2', {}, 'Loot') : null,
+    drops.length ? h('div', { class: 'row', style: 'margin-bottom:10px' }, filter,
+      h('label', { class: 'row small muted' }, onlyInterest, 'nur mit Empfängern/Interessenten')) : null,
     table,
   );
 }
