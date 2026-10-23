@@ -1475,7 +1475,8 @@ async function viewRun(id) {
     h('p', { class: 'muted small' }, hints[status]),
     sections,
     drops.length ? h('h2', {}, 'Loot') : null,
-    drops.length ? h('div', { class: 'row', style: 'margin-bottom:10px' }, filter,
+    // Filterzeile bleibt beim Scrollen durch die Loot-Liste oben stehen
+    drops.length ? h('div', { class: 'row sticky-filter' }, filter,
       h('label', { class: 'row small muted' }, onlyMine, 'nur wo ich Interessent bin'),
       h('label', { class: 'row small muted' }, withoutRecipients, 'nur ohne Empfänger/Interessenten'),
       trashPhase ? h('label', { class: 'row small muted' }, onlyTrash, 'nur Müll anzeigen') : null,

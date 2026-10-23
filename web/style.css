@@ -59,6 +59,14 @@ h2 { font-size: 17px; margin: 28px 0 10px; }
 }
 
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.sticky-filter {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg);
+  padding: 8px 0;
+  margin-bottom: 2px;
+}
 .sticky-head {
   position: sticky;
   top: 0;
