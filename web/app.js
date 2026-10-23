@@ -790,7 +790,13 @@ async function viewRun(id) {
               zeny(npcSell(d.npc_price)), h('span', { class: 'badge' }, 'NPC'))
           : '–',
       isAdmin && ['offen', 'abholung', 'verkauf'].includes(status)
-        ? h('button', { class: 'link small', title: 'Preis überschreiben', onclick: editPrice(d) }, '✎') : null);
+        ? h('button', { class: 'link small', title: 'Preis überschreiben', onclick: editPrice(d) }, '✎') : null,
+      isAdmin ? h('a', {
+        class: 'small', style: 'padding:0 4px;text-decoration:none',
+        href: `https://arcadia-market.de/sells/item_id/${encodeURIComponent(d.item_id)}`,
+        target: '_blank', rel: 'noopener noreferrer',
+        title: 'Verkaufsangebote auf arcadia-market.de',
+      }, '📈') : null);
 
     const actions = [];
     if (open && !assigned && amParticipant) {
