@@ -99,6 +99,7 @@ button.primary { background: var(--accent); color: var(--accent-text); border-co
 button.danger { color: var(--bad); }
 button.small { padding: 3px 8px; font-size: 13px; }
 button.on { background: var(--good); color: #0d2414; border-color: var(--good); }
+button.want { min-width: 6.2em; text-align: center; }   /* gleich breit mit und ohne ✓ */
 button.discord { background: var(--discord); border-color: var(--discord); color: #fff; font-weight: 600; padding: 10px 18px; }
 button.link { background: none; border: none; color: var(--muted); padding: 0 4px; }
 button.wish { margin-top: 3px; padding: 1px 8px; font-size: 12px; border-radius: 10px; color: var(--muted); background: none; }

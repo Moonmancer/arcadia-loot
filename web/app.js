@@ -1152,7 +1152,7 @@ async function viewRun(id) {
 
     const actions = [];
     if (open && !assigned && d.sold_price == null && amParticipant) {
-      actions.push(h('button', { class: 'small' + (mine ? ' on' : ''), onclick: toggleInterest(d, mine) }, mine ? 'Will ich ✓' : 'Will ich'));
+      actions.push(h('button', { class: 'small want' + (mine ? ' on' : ''), onclick: toggleInterest(d, mine) }, mine ? 'Will ich ✓' : 'Will ich'));
     }
     // Nachmelden während der Abholung: wer zuerst kommt, übernimmt den Drop zum Partypreis
     if (status === 'abholung' && myRole && !list.length && d.sold_price == null && !assigned) {
