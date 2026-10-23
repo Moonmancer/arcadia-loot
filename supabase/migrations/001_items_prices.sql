@@ -42,6 +42,11 @@ create policy "items lesen"   on public.items         for select to authenticate
 create policy "preise lesen"  on public.item_prices   for select to authenticated using (true);
 create policy "verlauf lesen" on public.price_history for select to authenticated using (true);
 
+-- Rechte explizit vergeben (unabhängig von "Automatically expose new tables")
+revoke all on public.items, public.item_prices, public.price_history from anon, authenticated;
+grant select on public.items, public.item_prices, public.price_history to authenticated;
+grant select, insert, update, delete on public.items, public.item_prices, public.price_history to service_role;
+
 -- Zeitpläne
 -- URL und Secret kommen aus Supabase Vault (Secrets "project_url" und "cron_secret"),
 -- damit diese Migration keine Platzhalter braucht. Einmalig anlegen, siehe README.

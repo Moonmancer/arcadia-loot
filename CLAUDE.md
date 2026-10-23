@@ -37,14 +37,32 @@ Fertig:
   Verkauf → `sell_min`, `sell_median`; Ankauf → `buy_max`. Sell/Buy getrennt upserten, damit der letzte
   bekannte Wert erhalten bleibt. Täglicher Snapshot in `price_history`, 180 Tage.
 - pg_cron-Jobs holen URL und Secret aus Supabase Vault (`project_url`, `cron_secret`).
+- **Loot-Regel (entschieden): Würfeln unter Interessenten.** Menge wird gleichmäßig auf die
+  Interessenten aufgeteilt, der Rest geht stückweise an die höchsten Würfe (55 auf 3 → 19/18/18;
+  Menge 1 → Höchster). Drops ohne Interessenten werden verkauft.
+- Schema `002_parties_loot.sql`: `profiles` (Trigger aus Discord-Metadaten), `parties`, `party_members`
+  (Ersteller wird `leader`), `runs` (`offen` → `gewuerfelt`), `drops`, `interests` (inkl. `roll`, `share`),
+  View `drop_overview` (Drop + Icon + Preis + `is_plain` + Interessentenzahl, `security_invoker`).
+  RLS: Mitglieder sehen nur ihre Partys. Würfelwerte, Zuteilung, Status nur über RPCs (Spaltenrechte).
+- RPC `import_drops(run, text)`: nimmt die eingefügte Guild-Storage-Liste (tab-getrennt:
+  ID, Name, Amount, Attributes, Cards). Eine Zeile = ein Drop; nicht stapelbare Items stehen
+  mehrfach in der Liste und werden einzeln gewürfelt.
+  Name behält Slots wie „[4]". Attribute/Karten ≠ None → `is_plain = false` (Marktpreis passt nicht).
+- RPC `roll_run(run)`: nur Run-Ersteller oder Party-Leiter, einmalig; 1–100 pro Interessent,
+  setzt `interests.share` nach obiger Regel, Gleichstand per Zufall.
+- Schema `003_wishlist.sql`: `wishlist` (pro Nutzer, nur selbst sichtbar, FK auf `items`).
+  Trigger tragen den Nutzer in allen seinen Partys bei passenden Drops **offener** Runs als Interessent
+  ein (`interests.source = 'wunschliste'`): bei Import, neuem Wunsch, Party-Beitritt. Wunsch entfernen
+  bzw. Party verlassen entfernt die Interessen wieder (nur offene Runs; manuelle Interessen beim
+  Entfernen eines Wunsches bleiben). Abgleich nur über Item-ID, Refine/Karten egal.
+- Migrationen lokal mit PGlite getestet (Auth-Stubs), noch nicht gegen echtes Supabase.
 
 Offen (nächste Schritte):
-1. **Loot-Verteilungsregel klären** (würfeln unter Interessenten / Prioritäts- oder Punkteliste /
-   alles verkaufen und Zeny teilen). Vor dem Datenmodell für Partys beim Nutzer nachfragen.
-2. Schema für Partys, Mitglieder, Drops, Interessen, Zuteilungen + RLS (Mitglieder sehen nur ihre Partys).
-3. Frontend in `web/`: Discord-Login, Party-Übersicht, Item-Suche mit Icon und Preis, Interesse eintragen.
-4. Discord-Gildenprüfung beim Login.
-5. Free-Projekte pausieren nach 7 Tagen Inaktivität – prüfen, ob die Cron-Jobs das verhindern, sonst Keep-alive.
+1. Frontend in `web/`: Discord-Login, Party-Übersicht, Run anlegen + Liste einfügen, Drops mit Icon
+   und Preis, Interesse eintragen, Würfeln, Ergebnis, Wunschliste pflegen (Item-Suche).
+2. Mitglieder einladen: aktuell fügt der Leiter per `user_id` hinzu (braucht Profilsuche im UI).
+3. Discord-Gildenprüfung beim Login.
+4. Free-Projekte pausieren nach 7 Tagen Inaktivität – prüfen, ob die Cron-Jobs das verhindern, sonst Keep-alive.
 
 ## Bekannte API-Eigenheiten
 
