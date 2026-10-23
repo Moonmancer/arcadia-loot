@@ -1226,6 +1226,9 @@ async function viewRun(id) {
       actions.push(h('button', {
         class: 'link small', title: 'Drop löschen',
         onclick: action(async () => {
+          const who = list.length ? ` Eingetragene Interessen (${list.map((i) => i.profiles.display_name).join(', ')}) gehen verloren.` : '';
+          if (!await confirmBox('Eintrag löschen', `${zenyFmt.format(d.amount)}× ${d.name} aus der Loot-Liste löschen?${who}`,
+            'Löschen', true)) return;
           await q(sb.from('drops').delete().eq('id', d.id));
           rerender();
         }),
