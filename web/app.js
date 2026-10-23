@@ -489,14 +489,14 @@ async function viewParty(id) {
   }
 
   const rename = isAdmin && h('button', {
-    class: 'link small',
+    class: 'link small', title: 'Party umbenennen',
     onclick: action(async () => {
       const n = await textBox('Party umbenennen', null, party.name);
       if (!n || !n.trim()) return;
       await q(sb.from('parties').update({ name: n.trim() }).eq('id', id));
       rerender();
     }),
-  }, 'umbenennen');
+  }, '✎');
 
   const del = isAdmin && h('button', {
     class: 'small danger',
@@ -1402,14 +1402,14 @@ async function viewRun(id) {
       h('div', {},
         h('h1', {}, run.title, statusBadge(status),
           canManage ? h('button', {
-            class: 'link small',
+            class: 'link small', title: 'Run umbenennen',
             onclick: action(async () => {
               const t = await textBox('Run umbenennen', null, run.title);
               if (!t || !t.trim() || t.trim() === run.title) return;
               await q(sb.from('runs').update({ title: t.trim() }).eq('id', id));
               rerender();
             }),
-          }, 'umbenennen') : null),
+          }, '✎') : null),
         h('div', { class: 'muted small' },
           `${drops.length} Drops · Marktwert ≈ ${zeny(total)} · Partypreis ${pct} % · ${participants.length} Teilnehmer`
           + (run.rolled_at ? ` · gewürfelt ${date(run.rolled_at)}` : '')),
