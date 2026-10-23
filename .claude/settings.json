@@ -6,7 +6,10 @@
       "Bash(supabase migration new:*)",
       "Bash(git status)",
       "Bash(git diff:*)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ],
     "deny": [
       "Read(./.env)",
@@ -16,8 +19,7 @@
     "ask": [
       "Bash(supabase db push:*)",
       "Bash(supabase secrets set:*)",
-      "Bash(supabase functions deploy:*)",
-      "Bash(git push:*)"
+      "Bash(supabase functions deploy:*)"
     ]
   }
 }
