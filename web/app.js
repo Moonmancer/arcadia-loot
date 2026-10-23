@@ -1086,11 +1086,11 @@ async function viewRun(id) {
 
     const priceCell = h('td', { class: 'num hide-sm' },
       d.price_override != null
-        ? h('span', { title: 'Vom Admin festgelegt' }, zeny(d.price_override), h('span', { class: 'badge warn' }, 'fest'))
+        ? h('span', { title: 'Vom Admin festgelegt' }, h('span', { class: 'badge warn badge-before' }, 'fest'), zeny(d.price_override))
         : d.is_plain && unitPrice(d) != null ? zeny(unitPrice(d))
         : npcSell(d.npc_price) != null
           ? h('span', { title: d.is_plain ? 'Kein Marktpreis – NPC-Verkaufspreis als Ersatz' : 'Marktpreis gilt nur für normale Items – NPC-Verkaufspreis als Ersatz' },
-              zeny(npcSell(d.npc_price)), h('span', { class: 'badge' }, 'NPC'))
+              h('span', { class: 'badge badge-before' }, 'NPC'), zeny(npcSell(d.npc_price)))
           : '–',
       isAdmin && ['offen', 'muell', 'abholung', 'verkauf'].includes(status)
         ? h('button', { class: 'link small', title: 'Preis überschreiben', onclick: editPrice(d) }, '✎') : null,
