@@ -4,9 +4,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Arcadia Loot</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <h1>Arcadia Loot</h1>
-  <p>Frontend folgt – siehe CLAUDE.md, Abschnitt „Offen".</p>
+  <header class="topbar">
+    <a class="brand" href="#/">Arcadia Loot</a>
+    <nav id="nav" hidden>
+      <a href="#/">Partys</a>
+      <a href="#/wunschliste">Wunschliste</a>
+    </nav>
+    <div id="user" class="user"></div>
+  </header>
+  <main id="app"><p class="muted">Lade …</p></main>
+  <div id="toast" class="toast" hidden></div>
+  <script type="module" src="app.js"></script>
 </body>
 </html>

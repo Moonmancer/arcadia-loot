@@ -55,12 +55,21 @@ Fertig:
   ein (`interests.source = 'wunschliste'`): bei Import, neuem Wunsch, Party-Beitritt. Wunsch entfernen
   bzw. Party verlassen entfernt die Interessen wieder (nur offene Runs; manuelle Interessen beim
   Entfernen eines Wunsches bleiben). Abgleich nur über Item-ID, Refine/Karten egal.
-- Migrationen lokal mit PGlite getestet (Auth-Stubs), noch nicht gegen echtes Supabase.
+- Migrationen lokal mit PGlite getestet (Auth-Stubs).
+- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–003 eingespielt,
+  `sync-arcadia` deployt, Secrets + Vault gesetzt, Items/Icons/Preise geladen, Cron-Jobs aktiv.
+  GitHub-Repo `Moonmancer/arcadia-loot` (öffentlich); Pages noch nicht eingeschaltet.
+
+- Frontend `web/` (statisch, ES-Module, supabase-js 2.45.4 von jsdelivr, kein Build):
+  `config.js` (URL + publishable key), `app.js` (Hash-Routing `#/`, `#/party/:id`, `#/run/:id`,
+  `#/wunschliste`; Login per Discord mit PKCE), `style.css`. DOM nur über `h()`/textContent.
+  Leiter fügt Mitglieder per Profilsuche (Discord-Name) hinzu. Lokal: `.claude/launch.json` → Server
+  `web` auf Port 5500. Ansichten mit gemockten Daten getestet, echter Login noch nicht.
 
 Offen (nächste Schritte):
-1. Frontend in `web/`: Discord-Login, Party-Übersicht, Run anlegen + Liste einfügen, Drops mit Icon
-   und Preis, Interesse eintragen, Würfeln, Ergebnis, Wunschliste pflegen (Item-Suche).
-2. Mitglieder einladen: aktuell fügt der Leiter per `user_id` hinzu (braucht Profilsuche im UI).
+1. Discord-Provider in Supabase aktivieren; *Authentication → URL Configuration*: Site URL
+   `https://moonmancer.github.io/arcadia-loot/`, Redirect URLs zusätzlich `http://localhost:5500/`.
+2. GitHub Pages einschalten (Source: GitHub Actions), danach echten Login-Durchlauf testen.
 3. Discord-Gildenprüfung beim Login.
 4. Free-Projekte pausieren nach 7 Tagen Inaktivität – prüfen, ob die Cron-Jobs das verhindern, sonst Keep-alive.
 
@@ -78,4 +87,8 @@ supabase db push
 supabase secrets set ARCADIA_API_KEY=... CRON_SECRET=...
 supabase functions deploy sync-arcadia --no-verify-jwt
 supabase functions serve sync-arcadia --env-file supabase/functions/.env   # lokal
+supabase db query --linked "select ..."   # SQL gegen das Live-Projekt
 ```
+
+Windows/PowerShell: `npx.cmd supabase@2 ...` statt `supabase` (keine globale Installation, Execution Policy).
+Deploy ohne Docker: `supabase functions deploy sync-arcadia --no-verify-jwt --use-api`.
