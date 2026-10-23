@@ -632,22 +632,36 @@ async function viewRun(id) {
   };
 
   let pickupBox = null;
-  if (!open && handouts.length) {
+  // In der Auszahlung werden nur noch die Rest-Items ausgehändigt
+  const toHandOut = status === 'auszahlung' ? handouts.filter((i) => i.source === 'rest') : handouts;
+  if (!open && toHandOut.length) {
     const byUser = new Map();
-    for (const i of handouts) {
+    for (const i of toHandOut) {
       if (!byUser.has(i.user_id)) byUser.set(i.user_id, { name: i.profiles.display_name, list: [] });
       byUser.get(i.user_id).list.push(i);
     }
-    const done = handouts.filter((i) => i.picked_up_at).length;
+    const done = toHandOut.filter((i) => i.picked_up_at).length;
     pickupBox = h('div', {},
-      h('h2', {}, `Ausgabe (${done}/${handouts.length} abgeholt)`),
+      h('h2', {}, `${status === 'auszahlung' ? 'Ausgabe Rest' : 'Ausgabe'} (${done}/${toHandOut.length} abgeholt)`),
       h('div', { class: 'cards' }, [...byUser.entries()]
         .sort((a, b) => (a[0] === me.id ? -1 : b[0] === me.id ? 1 : a[1].name.localeCompare(b[1].name)))
         .map(([uid, u]) => {
           const all = u.list.every((i) => i.picked_up_at);
+          // „Alles abgeholt“: alle offenen Anteile, die jetzt abgehakt werden dürfen (Rest erst in der Auszahlung)
+          const pickable = finished || !(uid === me.id || isSeller) ? []
+            : u.list.filter((i) => !i.picked_up_at && !(i.source === 'rest' && status !== 'auszahlung'));
+          const allBtn = pickable.length ? h('button', {
+            class: 'small',
+            onclick: action(async () => {
+              for (const i of pickable) await q(sb.rpc('set_picked_up', { p_drop: i.drop_id, p_user: uid, p_done: true }));
+              toast(`${u.name}: ${pickable.length} Anteil(e) als abgeholt markiert`);
+              rerender();
+            }),
+          }, 'Alles abgeholt') : null;
           return h('div', { class: 'panel', style: uid === me.id ? 'border-color:var(--accent)' : '' },
             h('div', { class: 'row spread' }, h('strong', {}, u.name),
-              all ? h('span', { class: 'badge good' }, 'alles abgeholt') : h('span', { class: 'badge warn' }, 'offen')),
+              all ? h('span', { class: 'badge good' }, 'alles abgeholt')
+                : h('span', { class: 'row' }, allBtn, h('span', { class: 'badge warn' }, 'offen'))),
             h('ul', { class: 'list' }, u.list.map((i) => h('li', { class: 'small' },
               h('label', { class: 'row', style: 'flex-wrap:nowrap' }, pickToggle(i),
                 `${zenyFmt.format(i.share)}× ${dropById.get(i.drop_id).name}`,
