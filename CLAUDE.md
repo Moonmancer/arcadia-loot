@@ -96,11 +96,12 @@ Fertig:
   verkauft Müll ohne Konflikt an NPC (Konflikt: Wunschliste eines Teilnehmers, Interesse, Zuweisung, kein
   NPC-Preis) und gibt die Anzahl zurück; `muell→offen` macht das rückgängig. Verkaufte Drops nehmen keine
   Interessen an. Müll-Liste auch in der Party-Ansicht pflegbar.
+- An NPC verkaufte Drops (`sold_to_npc`) lassen sich nicht mehr zuweisen (015); Spieler-Verkäufe schon.
 - Startseite „Offen bei dir“: eigene nicht abgeholte Anteile (Runs in abholung/verkauf/auszahlung) und
   eigener Saldo in Runs der Phase auszahlung, solange nicht als ausgezahlt markiert. Abrechnung steckt in
   `settle()` in `app.js` und wird von Run-Ansicht und Startseite gemeinsam genutzt.
 - Migrationen lokal mit PGlite getestet (Auth-Stubs).
-- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–014 eingespielt,
+- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–015 eingespielt,
   `sync-arcadia` deployt, Secrets + Vault gesetzt, Items/Icons/Preise geladen, Cron-Jobs aktiv.
   GitHub-Repo `Moonmancer/arcadia-loot` (öffentlich); Pages aktiv (Source: GitHub Actions).
 

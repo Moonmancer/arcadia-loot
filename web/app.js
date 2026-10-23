@@ -964,7 +964,9 @@ async function viewRun(id) {
         }),
       }, 'Aufteilung zurück'));
     }
-    if (isAdmin && ['offen', 'muell', 'abholung', 'verkauf'].includes(status) && !isRest) actions.push(assignSelect(d));
+    if (isAdmin && ['offen', 'muell', 'abholung', 'verkauf'].includes(status) && !isRest && !d.sold_to_npc) {
+      actions.push(assignSelect(d));
+    }
     if (trashPhase && isAdmin && d.item_type != null) {
       const isTrash = trash.has(d.item_id);
       actions.push(h('button', {
