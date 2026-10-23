@@ -751,7 +751,8 @@ async function viewRun(id) {
   const unsold = leftovers.filter((d) => d.sold_price == null);
   const trashBlock = (d) => (conflictBy.has(d.id) ? 'wunschliste' : d.assigned_to != null ? 'zuweisung'
     : byDrop.has(d.id) ? 'interesse' : npcSell(d.npc_price) == null ? 'npc' : null);
-  const trashToSell = trashPhase ? drops.filter((d) => trash.has(d.item_id) && d.sold_price == null && !trashBlock(d)) : [];
+  // als Funktion, weil die Müll-Markierung ohne Neuladen geändert wird
+  const trashToSell = () => (trashPhase ? drops.filter((d) => trash.has(d.item_id) && d.sold_price == null && !trashBlock(d)) : []);
 
   const goTo = async (to) => {
     const n = await q(sb.rpc('set_run_status', { p_run: id, p_status: to }));
@@ -801,17 +802,19 @@ async function viewRun(id) {
       class: 'primary',
       onclick: action(async () => {
         if (!await resolvePendingPrices()) return;
+        await trashSaving();   // noch laufende Müll-Markierungen abwarten
+        const sell = trashToSell();
         const blocked = drops.filter((d) => trash.has(d.item_id) && d.sold_price == null && trashBlock(d));
         const r = await dialog({
           title: 'Weiter: Müll verkaufen',
-          text: trashToSell.length
-            ? `${trashToSell.length} Müll-Drop(s) werden für ${zeny(npcSum(trashToSell))} an NPC verkauft.`
+          text: sell.length
+            ? `${sell.length} Müll-Drop(s) werden für ${zeny(npcSum(sell))} an NPC verkauft.`
             : 'Es ist kein Müll zu verkaufen.',
           items: [
-            ...trashToSell.map((d) => `${zenyFmt.format(d.amount)}× ${d.name} → ${zeny(d.amount * npcSell(d.npc_price))}`),
+            ...sell.map((d) => `${zenyFmt.format(d.amount)}× ${d.name} → ${zeny(d.amount * npcSell(d.npc_price))}`),
             ...(blocked.length ? [`${blocked.length} Müll-Drop(s) bleiben wegen Konflikt (Wunschliste, Interesse, Zuweisung oder kein NPC-Preis)`] : []),
           ],
-          buttons: [{ label: trashToSell.length ? 'Müll verkaufen & weiter' : 'Weiter', value: 'go', primary: true }],
+          buttons: [{ label: sell.length ? 'Müll verkaufen & weiter' : 'Weiter', value: 'go', primary: true }],
         });
         if (!r) return;
         const n = await goTo('muell');
@@ -1169,6 +1172,57 @@ async function viewRun(id) {
     return { kind: counts[0][0], n: counts[0][1], total: t.rest_count + t.npc_count + t.sold_count };
   };
 
+  // ----- Müll markieren: sofort anzeigen, im Hintergrund speichern -----
+  const trashRowsByItem = new Map();
+  const trashCount = h('span');
+  const trashBadge = (d) => {
+    if (!trashPhase || !trash.has(d.item_id)) return null;
+    const block = d.sold_price == null ? trashBlock(d) : null;
+    if (!block) return h('span', { class: 'badge', title: 'Wird beim Weiter-Klick an NPC verkauft' }, 'Müll → NPC');
+    const text = {
+      wunschliste: `⚠ Wunschliste: ${(conflictBy.get(d.id) || []).join(', ')}`,
+      interesse: '⚠ Interesse eingetragen',
+      zuweisung: '⚠ zugewiesen',
+      npc: '⚠ kein NPC-Preis',
+    }[block];
+    return h('span', { class: 'badge warn', title: 'Müll – wird nicht verkauft' }, `Müll · ${text}`);
+  };
+  const showTrash = (itemId) => {
+    const on = trash.has(itemId);
+    for (const { d, tr, btn, slot } of trashRowsByItem.get(itemId) || []) {
+      tr.dataset.trash = on ? '1' : '';
+      slot.replaceChildren(...[trashBadge(d)].filter(Boolean));
+      if (btn) {
+        btn.textContent = on ? 'Müll ✓' : 'Müll';
+        btn.classList.toggle('on', on);
+        btn.title = on ? 'Von der Müll-Liste der Party nehmen' : 'Auf die Müll-Liste der Party setzen';
+      }
+    }
+    const n = trashToSell().length;
+    trashCount.textContent = n ? ` Aktuell ${n} Müll-Drop(s).` : '';
+  };
+  // Speichern je Item nacheinander, damit schnelles An/Aus in der richtigen Reihenfolge ankommt
+  const trashQueue = new Map();
+  const toggleTrash = (itemId) => {
+    const on = !trash.has(itemId);
+    on ? trash.add(itemId) : trash.delete(itemId);
+    showTrash(itemId);
+    applyFilter();
+    const next = (trashQueue.get(itemId) || Promise.resolve()).then(async () => {
+      const { error } = on
+        ? await sb.from('party_trash').insert({ party_id: run.party_id, item_id: itemId })
+        : await sb.from('party_trash').delete().eq('party_id', run.party_id).eq('item_id', itemId);
+      if (error && error.code !== '23505') {                       // 23505 = war schon Müll
+        on ? trash.delete(itemId) : trash.add(itemId);
+        showTrash(itemId);
+        applyFilter();
+        toast(`Müll-Markierung nicht gespeichert: ${error.message}`, true);
+      }
+    });
+    trashQueue.set(itemId, next);
+  };
+  const trashSaving = () => Promise.all(trashQueue.values());
+
   // Filter
   const filter = h('input', { type: 'search', placeholder: 'Filtern …' });
   const withoutRecipients = h('input', { type: 'checkbox' });
@@ -1281,17 +1335,10 @@ async function viewRun(id) {
     if (isAdmin && ['offen', 'muell', 'abholung', 'verkauf'].includes(status) && !isRest && !d.sold_to_npc) {
       actions.push(assignSelect(d));
     }
+    let trashBtn = null;
     if (trashPhase && isAdmin && d.item_type != null) {
-      const isTrash = trash.has(d.item_id);
-      actions.push(h('button', {
-        class: 'small' + (isTrash ? ' on' : ''),
-        title: isTrash ? 'Von der Müll-Liste der Party nehmen' : 'Auf die Müll-Liste der Party setzen',
-        onclick: action(async () => {
-          if (isTrash) await q(sb.from('party_trash').delete().eq('party_id', run.party_id).eq('item_id', d.item_id));
-          else await q(sb.from('party_trash').insert({ party_id: run.party_id, item_id: d.item_id }));
-          rerender();
-        }),
-      }, isTrash ? 'Müll ✓' : 'Müll'));
+      trashBtn = h('button', { class: 'small', onclick: () => toggleTrash(d.item_id) });
+      actions.push(trashBtn);
     }
     if (open && canManage) {
       actions.push(h('button', {
@@ -1306,23 +1353,14 @@ async function viewRun(id) {
       }, '✕'));
     }
 
+    const trashSlot = h('span');
     const tr = h('tr', {},
       h('td', { class: 'hide-sm' }, icon(d.icon)),
       h('td', {},
         d.name,
         !d.is_plain ? h('span', { class: 'badge warn', title: [d.attributes, d.cards].filter(Boolean).join(' · ') },
           'Attr./Karten') : null,
-        trashPhase && trash.has(d.item_id) ? (() => {
-          const block = d.sold_price == null ? trashBlock(d) : null;
-          if (!block) return h('span', { class: 'badge', title: 'Wird beim Würfeln an NPC verkauft' }, 'Müll → NPC');
-          const text = {
-            wunschliste: `⚠ Wunschliste: ${(conflictBy.get(d.id) || []).join(', ')}`,
-            interesse: '⚠ Interesse eingetragen',
-            zuweisung: '⚠ zugewiesen',
-            npc: '⚠ kein NPC-Preis',
-          }[block];
-          return h('span', { class: 'badge warn', title: 'Müll – wird beim Würfeln nicht verkauft' }, `Müll · ${text}`);
-        })() : null,
+        trashSlot,
         (() => {
           const sug = restMode && !list.length && d.sold_price == null ? suggestion(d) : null;
           return sug ? h('span', {
@@ -1350,8 +1388,9 @@ async function viewRun(id) {
     tr.dataset.search = d.name.toLowerCase();
     tr.dataset.interest = list.length ? '1' : '';
     tr.dataset.mine = mine ? '1' : '';
-    tr.dataset.trash = trash.has(d.item_id) ? '1' : '';
     tr.dataset.soldtrash = isSoldTrash(d) ? '1' : '';
+    if (!trashRowsByItem.has(d.item_id)) trashRowsByItem.set(d.item_id, []);
+    trashRowsByItem.get(d.item_id).push({ d, tr, btn: trashBtn, slot: trashSlot });
     return tr;
   });
 
@@ -1371,6 +1410,7 @@ async function viewRun(id) {
   onlyMine.addEventListener('change', applyFilter);
   onlyTrash.addEventListener('change', applyFilter);
   hideTrash.addEventListener('change', applyFilter);
+  for (const itemId of trashRowsByItem.keys()) showTrash(itemId);
   applyFilter();
 
   updateRestButton();
@@ -1457,8 +1497,7 @@ async function viewRun(id) {
   const hints = {
     offen: 'Teilnehmer festlegen, Loot einfügen, Interesse anmelden. ★ = automatisch über deine Wunschliste. ' +
       'Admins markieren Müll (Müll-Liste der Party). Mit „Weiter: Müll verkaufen“ geht aller Müll an NPC – außer er ' +
-      'steht auf der Wunschliste eines Teilnehmers, jemand hat Interesse eingetragen oder er ist zugewiesen.' +
-      (trashToSell.length ? ` Aktuell ${trashToSell.length} Müll-Drop(s).` : ''),
+      'steht auf der Wunschliste eines Teilnehmers, jemand hat Interesse eingetragen oder er ist zugewiesen.',
     muell: 'Müll ist an NPC verkauft. Interessen können noch geändert werden, dann wird ausgewürfelt: ' +
       'Die Menge wird gleichmäßig auf alle Interessenten verteilt, den Rest bekommen die höchsten Würfe. ' +
       `Empfänger zahlen den Partypreis (${pct} %) in die Kasse.`,
@@ -1543,7 +1582,7 @@ async function viewRun(id) {
       ),
     ),
     stepper(status, drops.length > 0),
-    h('p', { class: 'muted small' }, hints[status]),
+    h('p', { class: 'muted small' }, hints[status], trashPhase ? trashCount : null),
     sections,
     drops.length ? h('h2', {}, 'Loot') : null,
     // Filterzeile bleibt beim Scrollen durch die Loot-Liste oben stehen
