@@ -1400,7 +1400,16 @@ async function viewRun(id) {
     h('p', { class: 'small' }, h('a', { href: `#/party/${run.party_id}` }, '← ' + run.parties.name)),
     h('div', { class: 'row spread' },
       h('div', {},
-        h('h1', {}, run.title, statusBadge(status)),
+        h('h1', {}, run.title, statusBadge(status),
+          canManage ? h('button', {
+            class: 'link small',
+            onclick: action(async () => {
+              const t = await textBox('Run umbenennen', null, run.title);
+              if (!t || !t.trim() || t.trim() === run.title) return;
+              await q(sb.from('runs').update({ title: t.trim() }).eq('id', id));
+              rerender();
+            }),
+          }, 'umbenennen') : null),
         h('div', { class: 'muted small' },
           `${drops.length} Drops · Marktwert ≈ ${zeny(total)} · Partypreis ${pct} % · ${participants.length} Teilnehmer`
           + (run.rolled_at ? ` · gewürfelt ${date(run.rolled_at)}` : '')),
