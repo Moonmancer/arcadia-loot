@@ -108,11 +108,16 @@ Fertig:
   Frontend: Vorschlagsblock für Admins in beendeten Runs, vorausgewählt.
 - Loot-Filter: „nur wo ich Interessent bin“, „nur ohne Empfänger/Interessenten“; ab `muell` zusätzlich „Müll ausblenden“ (standardmäßig an:
   Drops auf der Müll-Liste, die an NPC verkauft sind).
+- Einladungslinks (017): `party_invites` (Token, `expires_at`, `uses`); `can_invite(party)` = Admin oder
+  Ersteller der Party (solange Mitglied) – nur sie erstellen (`create_invite(party, tage)`), sehen und widerrufen
+  Links. `invite_info(token)` / `join_party(token)` für jeden Angemeldeten; Beitritt als `teilnehmer`.
+  Frontend: Route `#/einladung/<token>`; Token wird in localStorage gemerkt, weil der Discord-Login den
+  #-Teil verliert, und nach dem Login wieder geöffnet.
 - Startseite „Offen bei dir“: eigene nicht abgeholte Anteile (Runs in abholung/verkauf/auszahlung) und
   eigener Saldo in Runs der Phase auszahlung, solange nicht als ausgezahlt markiert. Abrechnung steckt in
   `settle()` in `app.js` und wird von Run-Ansicht und Startseite gemeinsam genutzt.
 - Migrationen lokal mit PGlite getestet (Auth-Stubs).
-- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–016 eingespielt,
+- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–017 eingespielt,
   `sync-arcadia` deployt, Secrets + Vault gesetzt, Items/Icons/Preise geladen, Cron-Jobs aktiv.
   GitHub-Repo `Moonmancer/arcadia-loot` (öffentlich); Pages aktiv (Source: GitHub Actions).
 

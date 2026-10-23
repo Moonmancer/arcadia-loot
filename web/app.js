@@ -167,6 +167,7 @@ function renderLogin() {
     h('div', { class: 'center stack' },
       h('h1', {}, 'Arcadia Loot'),
       h('p', { class: 'muted' }, 'Loot-Verteilung für Partys auf Arcadia Online – mit aktuellen Marktpreisen.'),
+      pendingInvite() ? h('p', {}, 'Du wurdest in eine Party eingeladen. Melde dich an, um beizutreten.') : null,
       h('button', {
         class: 'discord',
         onclick: action(async () => {
@@ -187,12 +188,25 @@ const routes = [
   [/^#\/party\/(\d+)$/, viewParty],
   [/^#\/run\/(\d+)$/, viewRun],
   [/^#\/wunschliste$/, viewWishlist],
+  [/^#\/einladung\/([0-9a-f]+)$/, viewInvite],
 ];
+
+// Einladungs-Token über den Discord-Login hinweg merken (der Login-Redirect verliert den #-Teil)
+const INVITE_KEY = 'arcadia-loot-invite';
+function pendingInvite() {
+  try { return localStorage.getItem(INVITE_KEY); } catch { return null; }
+}
+function setPendingInvite(token) {
+  try { token ? localStorage.setItem(INVITE_KEY, token) : localStorage.removeItem(INVITE_KEY); } catch { /* egal */ }
+}
 
 let renderSeq = 0;
 async function route() {
   renderUser();
+  const invite = (location.hash.match(/^#\/einladung\/([0-9a-f]+)$/) || [])[1];
+  if (invite) setPendingInvite(invite);
   if (!me) return renderLogin();
+  if (!invite && pendingInvite()) { location.hash = `#/einladung/${pendingInvite()}`; return; }
   const hash = location.hash || '#/';
   for (const a of document.querySelectorAll('#nav a')) {
     a.classList.toggle('active', a.getAttribute('href') === hash);
@@ -378,6 +392,12 @@ async function viewParty(id) {
   if (!party) return h('p', { class: 'muted' }, 'Party nicht gefunden oder kein Zugriff.');
 
   const isAdmin = members.some((m) => m.user_id === me.id && m.role === 'admin');
+  // Einladungslinks: nur Admins und der Ersteller der Party (gleiche Regel wie can_invite in der DB)
+  const canInvite = isAdmin || party.created_by === me.id;
+  const invites = canInvite
+    ? await q(sb.from('party_invites').select('token, expires_at, uses, created_at').eq('party_id', id)
+        .gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false }))
+    : [];
   members.sort(byRoleAndName);
 
   // Runs
@@ -507,6 +527,56 @@ async function viewParty(id) {
     }),
   }, 'Party löschen');
 
+  // Einladungslinks
+  let inviteBox = null;
+  if (canInvite) {
+    const inviteUrl = (token) => `${location.origin}${location.pathname}#/einladung/${token}`;
+    const copy = async (url) => {
+      try { await navigator.clipboard.writeText(url); toast('Link kopiert'); }
+      catch { toast('Kopieren nicht möglich – Link bitte markieren und kopieren', true); }
+    };
+    const create = action(async () => {
+      const r = await dialog({
+        title: 'Einladungslink erstellen',
+        text: 'Wer den Link öffnet und sich mit Discord anmeldet, kann der Party als Teilnehmer beitreten.',
+        fields: [{ type: 'radio', name: 'days', value: '7', options: [
+          { value: '1', label: '1 Tag' }, { value: '7', label: '7 Tage' }, { value: '30', label: '30 Tage' }] }],
+        buttons: [{ label: 'Erstellen', value: 'ok', primary: true }],
+      });
+      if (!r) return;
+      const token = await q(sb.rpc('create_invite', { p_party: id, p_days: Number(r.values.days) }));
+      await copy(inviteUrl(token));
+      rerender();
+    });
+    inviteBox = h('div', {},
+      h('div', { class: 'row spread' },
+        h('h2', {}, `Einladungslinks (${invites.length})`),
+        h('button', { class: 'small', onclick: create }, 'Einladungslink erstellen')),
+      h('div', { class: 'panel' },
+        invites.length
+          ? h('ul', { class: 'list' }, invites.map((inv) => {
+              const field = h('input', { type: 'text', readonly: true, value: inviteUrl(inv.token) });
+              field.addEventListener('focus', () => field.select());
+              return h('li', {},
+                field,
+                h('span', { class: 'muted small', style: 'white-space:nowrap' },
+                  `bis ${date(inv.expires_at)} · ${inv.uses}× benutzt`),
+                h('button', { class: 'small', onclick: () => copy(inviteUrl(inv.token)) }, 'Kopieren'),
+                h('button', {
+                  class: 'small danger',
+                  onclick: action(async () => {
+                    if (!await confirmBox('Link widerrufen', 'Der Link funktioniert danach nicht mehr. Wer schon beigetreten ist, bleibt Mitglied.',
+                      'Widerrufen', true)) return;
+                    await q(sb.from('party_invites').delete().eq('token', inv.token));
+                    rerender();
+                  }),
+                }, 'Widerrufen'));
+            }))
+          : h('p', { class: 'muted small', style: 'margin:0' },
+              'Noch kein aktiver Link. Ein Link lädt neue Spieler ein – sie müssen sich vorher nicht angemeldet haben.')),
+    );
+  }
+
   // Müll-Liste: Items, die in der Phase „Müll verkaufen“ automatisch an NPC gehen
   trash.sort((a, b) => (a.items?.name ?? '').localeCompare(b.items?.name ?? ''));
   const trashIds = new Set(trash.map((t) => t.item_id));
@@ -566,6 +636,7 @@ async function viewParty(id) {
     h('div', { class: 'panel' }, runList),
     h('h2', {}, `Mitglieder (${members.length})`),
     h('div', { class: 'panel' }, memberList, addMember),
+    inviteBox,
     h('div', { class: 'row spread' },
       h('h2', {}, `Müll-Liste (${trash.length})`),
       isAdmin && trash.length ? h('button', {
@@ -1484,6 +1555,37 @@ async function viewRun(id) {
       : null,
     table,
   );
+}
+
+// ---------- Einladung ----------
+
+async function viewInvite(token) {
+  setPendingInvite(null);
+  const [info] = await q(sb.rpc('invite_info', { p_token: token }));
+  if (!info) {
+    return h('div', { class: 'center stack' },
+      h('h1', {}, 'Einladung ungültig'),
+      h('p', { class: 'muted' }, 'Dieser Einladungslink ist abgelaufen oder wurde widerrufen. Frag nach einem neuen Link.'),
+      h('a', { href: '#/' }, 'Zu meinen Partys'));
+  }
+  if (info.already_member) {
+    return h('div', { class: 'center stack' },
+      h('h1', {}, info.party_name),
+      h('p', { class: 'muted' }, 'Du bist schon Mitglied dieser Party.'),
+      h('a', { href: `#/party/${info.party_id}` }, 'Zur Party'));
+  }
+  return h('div', { class: 'center stack' },
+    h('p', { class: 'muted' }, 'Du wurdest eingeladen in die Party'),
+    h('h1', {}, info.party_name),
+    h('button', {
+      class: 'primary',
+      onclick: action(async () => {
+        const partyId = await q(sb.rpc('join_party', { p_token: token }));
+        toast(`Willkommen in ${info.party_name}!`);
+        location.hash = `#/party/${partyId}`;
+      }),
+    }, 'Party beitreten'),
+    h('p', { class: 'muted small' }, `Link gültig bis ${date(info.expires_at)}`));
 }
 
 // ---------- Wunschliste ----------
