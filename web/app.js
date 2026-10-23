@@ -1101,6 +1101,7 @@ async function viewRun(id) {
   // Filter
   const filter = h('input', { type: 'search', placeholder: 'Filtern …' });
   const withoutRecipients = h('input', { type: 'checkbox' });
+  const onlyMine = h('input', { type: 'checkbox' });
   const onlyTrash = h('input', { type: 'checkbox' });
   // Ab „Müll verkauft“: an NPC verkauften Müll standardmäßig ausblenden
   const hideTrash = h('input', { type: 'checkbox' });
@@ -1274,6 +1275,7 @@ async function viewRun(id) {
     );
     tr.dataset.search = d.name.toLowerCase();
     tr.dataset.interest = list.length ? '1' : '';
+    tr.dataset.mine = mine ? '1' : '';
     tr.dataset.trash = trash.has(d.item_id) ? '1' : '';
     tr.dataset.soldtrash = isSoldTrash(d) ? '1' : '';
     return tr;
@@ -1283,6 +1285,7 @@ async function viewRun(id) {
     const term = filter.value.trim().toLowerCase();
     for (const tr of rows) {
       tr.hidden = (term && !tr.dataset.search.includes(term)) || (withoutRecipients.checked && tr.dataset.interest)
+        || (onlyMine.checked && !tr.dataset.mine)
         || (onlyTrash.checked && !tr.dataset.trash) || (hideTrash.checked && tr.dataset.soldtrash);
     }
     // Zebrastreifen über die sichtbaren Zeilen, damit sie auch mit Filter abwechseln
@@ -1291,6 +1294,7 @@ async function viewRun(id) {
   };
   filter.addEventListener('input', applyFilter);
   withoutRecipients.addEventListener('change', applyFilter);
+  onlyMine.addEventListener('change', applyFilter);
   onlyTrash.addEventListener('change', applyFilter);
   hideTrash.addEventListener('change', applyFilter);
   applyFilter();
@@ -1469,6 +1473,7 @@ async function viewRun(id) {
     sections,
     drops.length ? h('h2', {}, 'Loot') : null,
     drops.length ? h('div', { class: 'row', style: 'margin-bottom:10px' }, filter,
+      h('label', { class: 'row small muted' }, onlyMine, 'nur wo ich Interessent bin'),
       h('label', { class: 'row small muted' }, withoutRecipients, 'nur ohne Empfänger/Interessenten'),
       trashPhase ? h('label', { class: 'row small muted' }, onlyTrash, 'nur Müll anzeigen') : null,
       !trashPhase && soldTrashCount ? h('label', { class: 'row small muted' }, hideTrash, `Müll ausblenden (${soldTrashCount})`) : null)
