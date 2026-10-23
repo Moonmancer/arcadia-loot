@@ -99,7 +99,7 @@ Fertig:
   eigener Saldo in Runs der Phase auszahlung, solange nicht als ausgezahlt markiert. Abrechnung steckt in
   `settle()` in `app.js` und wird von Run-Ansicht und Startseite gemeinsam genutzt.
 - Migrationen lokal mit PGlite getestet (Auth-Stubs).
-- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–012 eingespielt,
+- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–013 eingespielt,
   `sync-arcadia` deployt, Secrets + Vault gesetzt, Items/Icons/Preise geladen, Cron-Jobs aktiv.
   GitHub-Repo `Moonmancer/arcadia-loot` (öffentlich); Pages aktiv (Source: GitHub Actions).
 
