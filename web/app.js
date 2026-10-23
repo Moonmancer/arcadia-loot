@@ -129,7 +129,10 @@ async function route() {
   const seq = ++renderSeq;
   try {
     const view = await match[1](...match[0].slice(1));
-    if (seq === renderSeq) $app.replaceChildren(view);
+    if (seq === renderSeq) {
+      $app.replaceChildren(view);
+      $app.classList.toggle('wide', match[1] === viewRun);   // Loot-Tabelle braucht Breite
+    }
   } catch (e) {
     if (seq === renderSeq) $app.replaceChildren(h('p', { class: 'muted' }, 'Fehler: ' + e.message));
   }
@@ -552,13 +555,15 @@ async function viewRun(id) {
   const trends = run.status === 'verkauf' ? await q(sb.rpc('leftover_trends', { p_run: id })) : [];
   const trendBy = new Map(trends.map((t) => [t.item_id, t]));
   // Müll-Liste der Party und Wunschlisten-Konflikte (Müll wird in „Loot & Interessen“ markiert)
-  const [trashRows, conflicts] = run.status === 'offen'
-    ? await Promise.all([
-        q(sb.from('party_trash').select('item_id').eq('party_id', run.party_id)),
-        q(sb.rpc('wishlist_conflicts', { p_run: id })),
-      ])
-    : [[], []];
+  // Müll-Liste wird immer gebraucht (Markieren in „offen“, danach Filter „Müll ausblenden“)
+  const [trashRows, conflicts] = await Promise.all([
+    q(sb.from('party_trash').select('item_id').eq('party_id', run.party_id)),
+    run.status === 'offen' ? q(sb.rpc('wishlist_conflicts', { p_run: id })) : [],
+  ]);
   const trash = new Set(trashRows.map((t) => t.item_id));
+  // Nach dem Beenden: Items, die in den letzten 10 Runs immer an NPC gingen, als Müll vorschlagen (nur Admins)
+  const isAdminHere = members.some((m) => m.user_id === me.id && m.role === 'admin');
+  const suggestions = run.status === 'beendet' && isAdminHere ? await q(sb.rpc('trash_suggestions', { p_run: id })) : [];
   const conflictBy = new Map(conflicts.map((c) => [c.drop_id, c.names]));
 
   const status = run.status;
@@ -865,8 +870,13 @@ async function viewRun(id) {
 
   // Filter
   const filter = h('input', { type: 'search', placeholder: 'Filtern …' });
-  const onlyInterest = h('input', { type: 'checkbox' });
+  const withoutRecipients = h('input', { type: 'checkbox' });
   const onlyTrash = h('input', { type: 'checkbox' });
+  // Ab „Müll verkauft“: an NPC verkauften Müll standardmäßig ausblenden
+  const hideTrash = h('input', { type: 'checkbox' });
+  hideTrash.checked = status !== 'offen';
+  const isSoldTrash = (d) => trash.has(d.item_id) && d.sold_to_npc;
+  const soldTrashCount = drops.filter(isSoldTrash).length;
 
   const rows = drops.map((d) => {
     const list = byDrop.get(d.id) || [];
@@ -1033,19 +1043,25 @@ async function viewRun(id) {
     tr.dataset.search = d.name.toLowerCase();
     tr.dataset.interest = list.length ? '1' : '';
     tr.dataset.trash = trash.has(d.item_id) ? '1' : '';
+    tr.dataset.soldtrash = isSoldTrash(d) ? '1' : '';
     return tr;
   });
 
   const applyFilter = () => {
     const term = filter.value.trim().toLowerCase();
     for (const tr of rows) {
-      tr.hidden = (term && !tr.dataset.search.includes(term)) || (onlyInterest.checked && !tr.dataset.interest)
-        || (onlyTrash.checked && !tr.dataset.trash);
+      tr.hidden = (term && !tr.dataset.search.includes(term)) || (withoutRecipients.checked && tr.dataset.interest)
+        || (onlyTrash.checked && !tr.dataset.trash) || (hideTrash.checked && tr.dataset.soldtrash);
     }
+    // Zebrastreifen über die sichtbaren Zeilen, damit sie auch mit Filter abwechseln
+    let visible = 0;
+    for (const tr of rows) if (!tr.hidden) tr.classList.toggle('alt', visible++ % 2 === 1);
   };
   filter.addEventListener('input', applyFilter);
-  onlyInterest.addEventListener('change', applyFilter);
+  withoutRecipients.addEventListener('change', applyFilter);
   onlyTrash.addEventListener('change', applyFilter);
+  hideTrash.addEventListener('change', applyFilter);
+  applyFilter();
 
   updateRestButton();
   const restBar = restMode && unsold.length ? h('div', { class: 'panel row spread', style: 'margin:10px 0' },
@@ -1145,10 +1161,45 @@ async function viewRun(id) {
     beendet: `Run beendet${run.finished_at ? ' am ' + date(run.finished_at) : ''}.`,
   };
 
+  let suggestBox = null;
+  if (suggestions.length) {
+    const picked = new Set(suggestions.map((s) => s.item_id));
+    const addBtn = h('button', {
+      class: 'primary',
+      onclick: action(async () => {
+        if (!picked.size) return;
+        await q(sb.from('party_trash').insert([...picked].map((item_id) => ({ party_id: run.party_id, item_id }))));
+        toast(`${picked.size} Item(s) auf die Müll-Liste gesetzt`);
+        rerender();
+      }),
+    }, `Auf Müll-Liste setzen (${picked.size})`);
+    suggestBox = h('div', { class: 'panel', style: 'margin:14px 0;border-color:var(--accent)' },
+      h('strong', {}, 'Vorschlag für die Müll-Liste'),
+      h('p', { class: 'muted small', style: 'margin:4px 0 8px' },
+        'Diese Items wurden in den letzten 10 Runs der Party jedes Mal an NPC verkauft (mindestens in 2 Runs).'),
+      h('ul', { class: 'list' }, suggestions.map((sug) => {
+        const box = h('input', { type: 'checkbox' });
+        box.checked = true;
+        box.addEventListener('change', () => {
+          box.checked ? picked.add(sug.item_id) : picked.delete(sug.item_id);
+          addBtn.textContent = `Auf Müll-Liste setzen (${picked.size})`;
+          addBtn.disabled = !picked.size;
+        });
+        return h('li', {},
+          h('label', { class: 'row', style: 'flex-wrap:nowrap' }, box, icon(sug.icon), sug.name),
+          h('span', { class: 'muted small', style: 'margin-left:auto' },
+            `${sug.runs} Runs · ${sug.occurrences}× an NPC · NPC ${zeny(npcSell(sug.npc_price))}`));
+      })),
+      h('div', { class: 'row', style: 'margin-top:8px' }, addBtn),
+    );
+  }
+
   const sections = open
     ? [participantBox, importBox, summary]
-    : status === 'auszahlung' || status === 'beendet'
-      ? [summary, pickupBox]
+    : status === 'beendet'
+      ? [suggestBox, summary, pickupBox]
+      : status === 'auszahlung'
+        ? [summary, pickupBox]
       : [pickupBox, restBar, summary];
 
   return h('div', {},
@@ -1177,8 +1228,10 @@ async function viewRun(id) {
     sections,
     drops.length ? h('h2', {}, 'Loot') : null,
     drops.length ? h('div', { class: 'row', style: 'margin-bottom:10px' }, filter,
-      h('label', { class: 'row small muted' }, onlyInterest, 'nur mit Empfängern/Interessenten'),
-      trashPhase ? h('label', { class: 'row small muted' }, onlyTrash, 'nur Müll anzeigen') : null) : null,
+      h('label', { class: 'row small muted' }, withoutRecipients, 'nur ohne Empfänger/Interessenten'),
+      trashPhase ? h('label', { class: 'row small muted' }, onlyTrash, 'nur Müll anzeigen') : null,
+      !trashPhase && soldTrashCount ? h('label', { class: 'row small muted' }, hideTrash, `Müll ausblenden (${soldTrashCount})`) : null)
+      : null,
     table,
   );
 }

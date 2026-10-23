@@ -97,11 +97,17 @@ Fertig:
   NPC-Preis) und gibt die Anzahl zurück; `muell→offen` macht das rückgängig. Verkaufte Drops nehmen keine
   Interessen an. Müll-Liste auch in der Party-Ansicht pflegbar.
 - An NPC verkaufte Drops (`sold_to_npc`) lassen sich nicht mehr zuweisen (015); Spieler-Verkäufe schon.
+- Run-Ansicht ist breiter (`main.wide`, 1700 px).
+- Müll-Vorschläge (016): `trash_suggestions(run)` = Items, die in den letzten 10 Runs (auszahlung/beendet,
+  inkl. aktuellem) bei jedem Vorkommen an NPC gingen, in ≥ 2 Runs, noch nicht auf der Müll-Liste.
+  Frontend: Vorschlagsblock für Admins in beendeten Runs, vorausgewählt.
+- Loot-Filter: „nur ohne Empfänger/Interessenten“; ab `muell` zusätzlich „Müll ausblenden“ (standardmäßig an:
+  Drops auf der Müll-Liste, die an NPC verkauft sind).
 - Startseite „Offen bei dir“: eigene nicht abgeholte Anteile (Runs in abholung/verkauf/auszahlung) und
   eigener Saldo in Runs der Phase auszahlung, solange nicht als ausgezahlt markiert. Abrechnung steckt in
   `settle()` in `app.js` und wird von Run-Ansicht und Startseite gemeinsam genutzt.
 - Migrationen lokal mit PGlite getestet (Auth-Stubs).
-- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–015 eingespielt,
+- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–016 eingespielt,
   `sync-arcadia` deployt, Secrets + Vault gesetzt, Items/Icons/Preise geladen, Cron-Jobs aktiv.
   GitHub-Repo `Moonmancer/arcadia-loot` (öffentlich); Pages aktiv (Source: GitHub Actions).
 
