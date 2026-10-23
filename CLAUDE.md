@@ -79,9 +79,13 @@ Fertig:
   `drop_overview` hat dafür `npc_price` (008).
 - An NPC verkaufen (009): RPC `sell_to_npc(drop)` setzt `sold_price` = Menge × NPC-Verkaufspreis
   (gleiche Formel serverseitig) und `drops.sold_to_npc`; manueller Erlös/Zuweisung hebt die Markierung auf.
-  Frontend: Knopf „NPC“ pro übrigem Drop und „Alle an NPC“ in der Phase Verkauf & Rest.
+  Frontend: Knopf „NPC“ pro übrigem Drop und „Übrige an NPC“ (ohne als Rest markierte) in Verkauf & Rest.
+- Historie/Trend (010): RPC `leftover_trends(run)` zählt pro Item, wie oft es in den letzten 10 Runs der
+  Party (Phase auszahlung/beendet, ohne aktuellen) übrig war und als Rest / an NPC / an Spieler ging.
+  Wird aus Run-Daten gelesen, keine eigene Tabelle. Frontend: häufigstes Ergebnis als Badge „Trend: …“,
+  bei Trend Rest ist „Rest“ vorausgewählt; Gleichstand → kein Vorschlag.
 - Migrationen lokal mit PGlite getestet (Auth-Stubs).
-- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–009 eingespielt,
+- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–010 eingespielt,
   `sync-arcadia` deployt, Secrets + Vault gesetzt, Items/Icons/Preise geladen, Cron-Jobs aktiv.
   GitHub-Repo `Moonmancer/arcadia-loot` (öffentlich); Pages aktiv (Source: GitHub Actions).
 

@@ -378,6 +378,9 @@ async function viewRun(id) {
     q(sb.from('run_participants').select('user_id, paid_at, profiles!run_participants_user_id_fkey(display_name)').eq('run_id', id)),
     q(sb.from('wishlist').select('item_id')),
   ]);
+  // Historie der letzten 10 Runs: was wurde mit übrigen Items gemacht → Vorbelegung in „Verkauf & Rest“
+  const trends = run.status === 'verkauf' ? await q(sb.rpc('leftover_trends', { p_run: id })) : [];
+  const trendBy = new Map(trends.map((t) => [t.item_id, t]));
 
   const status = run.status;
   const open = status === 'offen';
@@ -609,9 +612,37 @@ async function viewRun(id) {
     }),
   }, 'Ausgewählte zufällig verteilen');
   const restBoxes = [];
+  // „Alle an NPC“ verkauft alle übrigen Drops mit NPC-Preis, außer den als Rest markierten
+  const npcCandidates = () => unsold.filter((d) => npcSell(d.npc_price) != null && !restPick.has(d.id));
+  const npcAllButton = h('button', {
+    class: 'small',
+    title: 'Alle übrigen Drops mit NPC-Preis an NPC verkaufen – als Rest markierte bleiben übrig',
+    onclick: action(async () => {
+      const list = npcCandidates();
+      if (!list.length) return;
+      const sum = list.reduce((s, d) => s + d.amount * npcSell(d.npc_price), 0);
+      if (!confirm(`${list.length} übrige Drop(s) für zusammen ${zeny(sum)} an NPC verkaufen? Als Rest markierte bleiben übrig.`)) return;
+      for (const d of list) await q(sb.rpc('sell_to_npc', { p_drop: d.id }));
+      toast(`${list.length} Drop(s) an NPC verkauft`);
+      rerender();
+    }),
+  });
   const updateRestButton = () => {
     restButton.disabled = restPick.size === 0;
     restButton.textContent = restPick.size ? `${restPick.size} zufällig verteilen` : 'Ausgewählte zufällig verteilen';
+    const n = npcCandidates().length;
+    npcAllButton.disabled = n === 0;
+    npcAllButton.textContent = `Übrige an NPC (${n})`;
+  };
+
+  // Vorschlag aus der Historie: häufigstes Ergebnis, bei Gleichstand keiner
+  const TREND_LABEL = { rest: 'Rest', npc: 'NPC', sold: 'Spieler' };
+  const suggestion = (d) => {
+    const t = trendBy.get(d.item_id);
+    if (!t) return null;
+    const counts = [['rest', t.rest_count], ['npc', t.npc_count], ['sold', t.sold_count]].sort((a, b) => b[1] - a[1]);
+    if (counts[0][1] === 0 || counts[0][1] === counts[1][1]) return null;
+    return { kind: counts[0][0], n: counts[0][1], total: t.rest_count + t.npc_count + t.sold_count };
   };
 
   // Filter
@@ -672,6 +703,7 @@ async function viewRun(id) {
     }
     if (restMode && !list.length && d.sold_price == null) {
       const box = h('input', { type: 'checkbox', title: 'Für zufällige Aufteilung auswählen' });
+      if (suggestion(d)?.kind === 'rest') { box.checked = true; restPick.add(d.id); }
       box.addEventListener('change', () => { box.checked ? restPick.add(d.id) : restPick.delete(d.id); updateRestButton(); });
       restBoxes.push([box, d.id]);
       actions.push(h('label', { class: 'row small muted', style: 'flex-wrap:nowrap' }, box, 'Rest'));
@@ -702,6 +734,13 @@ async function viewRun(id) {
         d.name,
         !d.is_plain ? h('span', { class: 'badge warn', title: [d.attributes, d.cards].filter(Boolean).join(' · ') },
           'Attr./Karten') : null,
+        (() => {
+          const sug = restMode && !list.length && d.sold_price == null ? suggestion(d) : null;
+          return sug ? h('span', {
+            class: 'badge' + (sug.kind === 'rest' ? ' good' : ''),
+            title: `In den letzten Runs übrig: ${sug.total}×, davon ${sug.n}× ${TREND_LABEL[sug.kind]}`,
+          }, `Trend: ${TREND_LABEL[sug.kind]} ${sug.n}/${sug.total}`) : null;
+        })(),
         // nur Items, die in der Item-Datenbank stehen (Wunschliste hat FK auf items)
         d.item_type != null ? h('div', {},
           h('button', {
@@ -733,22 +772,13 @@ async function viewRun(id) {
   filter.addEventListener('input', applyFilter);
   onlyInterest.addEventListener('change', applyFilter);
 
-  const npcLeft = unsold.filter((d) => npcSell(d.npc_price) != null);
+  updateRestButton();
   const restBar = restMode && unsold.length ? h('div', { class: 'panel row spread', style: 'margin:10px 0' },
     h('span', { class: 'small' },
-      `${unsold.length} Drop(s) übrig: Erlös eintragen, wenn verkauft – oder als „Rest“ auswählen und gratis zufällig verteilen (jeder Eintrag komplett an eine Person, reihum gleichmäßig).`),
+      `${unsold.length} Drop(s) übrig: Erlös eintragen, an NPC verkaufen oder als „Rest“ markieren und gratis zufällig verteilen ` +
+      '(jeder Eintrag komplett an eine Person, reihum gleichmäßig). Vorauswahl „Rest“ nach Trend der letzten 10 Runs.'),
     h('div', { class: 'row' },
-      npcLeft.length ? h('button', {
-        class: 'small',
-        title: 'Alle übrigen Drops mit NPC-Preis an NPC verkaufen',
-        onclick: action(async () => {
-          const sum = npcLeft.reduce((s, d) => s + d.amount * npcSell(d.npc_price), 0);
-          if (!confirm(`${npcLeft.length} übrige Drop(s) für zusammen ${zeny(sum)} an NPC verkaufen?`)) return;
-          for (const d of npcLeft) await q(sb.rpc('sell_to_npc', { p_drop: d.id }));
-          toast(`${npcLeft.length} Drop(s) an NPC verkauft`);
-          rerender();
-        }),
-      }, `Alle an NPC (${npcLeft.length})`) : null,
+      unsold.some((d) => npcSell(d.npc_price) != null) ? npcAllButton : null,
       h('button', {
         class: 'small',
         onclick: () => { for (const [box, did] of restBoxes) { box.checked = true; restPick.add(did); } updateRestButton(); },
