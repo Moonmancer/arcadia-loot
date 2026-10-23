@@ -87,11 +87,13 @@ Fertig:
 - Nachmelden (011): in Phase `abholung` kann jedes Party-Mitglied (auch Nicht-Teilnehmer) einen übrigen
   Drop per `claim_drop` übernehmen – wer zuerst kommt, ganzer Drop, zahlt Partypreis, kein Kassenanteil
   (`source = 'nachmeldung'`); `unclaim_drop` solange nicht abgeholt. Ab `verkauf` gesperrt.
+- Rest wird mit der Auszahlung ausgehändigt (012): `set_picked_up` erlaubt Rest-Anteile erst in Phase
+  `auszahlung`; Frontend sperrt die Häkchen vorher, Startseite zeigt Rest erst ab Auszahlung.
 - Startseite „Offen bei dir“: eigene nicht abgeholte Anteile (Runs in abholung/verkauf/auszahlung) und
   eigener Saldo in Runs der Phase auszahlung, solange nicht als ausgezahlt markiert. Abrechnung steckt in
   `settle()` in `app.js` und wird von Run-Ansicht und Startseite gemeinsam genutzt.
 - Migrationen lokal mit PGlite getestet (Auth-Stubs).
-- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–011 eingespielt,
+- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–012 eingespielt,
   `sync-arcadia` deployt, Secrets + Vault gesetzt, Items/Icons/Preise geladen, Cron-Jobs aktiv.
   GitHub-Repo `Moonmancer/arcadia-loot` (öffentlich); Pages aktiv (Source: GitHub Actions).
 

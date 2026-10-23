@@ -220,6 +220,7 @@ async function openTasks() {
   const byRun = new Map();
   for (const i of pickups) {
     const r = i.drops.runs;
+    if (i.source === 'rest' && r.status !== 'auszahlung') continue;   // Rest wird mit der Auszahlung ausgehändigt
     if (!byRun.has(r.id)) byRun.set(r.id, { run: r, items: [] });
     byRun.get(r.id).items.push(`${zenyFmt.format(i.share)}× ${i.drops.name}` + (i.source === 'rest' ? ' (Rest)' : ''));
   }
@@ -542,7 +543,9 @@ async function viewRun(id) {
   if (canAdvance && !open) {
     const i = PHASES.indexOf(status);
     if (i > 1) phaseButtons.push(h('button', { class: 'small', onclick: changeStatus(PHASES[i - 1]) }, `← ${PHASE_LABEL[PHASES[i - 1]]}`));
-    const openPickups = handouts.filter((x) => !x.picked_up_at).length;
+    // Rest wird erst mit der Auszahlung ausgehändigt und zählt vorher nicht als offene Abholung
+    const openPickups = handouts.filter((x) => !x.picked_up_at && x.source !== 'rest').length;
+    const openRest = handouts.filter((x) => !x.picked_up_at && x.source === 'rest').length;
     if (status === 'abholung') {
       phaseButtons.push(h('button', {
         class: 'primary',
@@ -557,9 +560,11 @@ async function viewRun(id) {
       }, 'Weiter: Auszahlung →'));
     } else if (status === 'auszahlung') {
       const unpaid = participants.filter((p) => !p.paid_at).length;
+      const warn = [unpaid && `${unpaid} Teilnehmer noch nicht ausgezahlt`,
+        (openPickups + openRest) && `${openPickups + openRest} Anteil(e) nicht ausgehändigt`].filter(Boolean).join(', ');
       phaseButtons.push(h('button', {
         class: 'primary',
-        onclick: changeStatus('beendet', unpaid ? `${unpaid} Teilnehmer noch nicht ausgezahlt. Run trotzdem beenden?` : 'Run beenden?'),
+        onclick: changeStatus('beendet', warn ? `${warn}. Run trotzdem beenden?` : 'Run beenden?'),
       }, 'Run beenden'));
     }
   }
@@ -613,8 +618,9 @@ async function viewRun(id) {
 
   // ----- Ausgabe / Abholung -----
   const pickToggle = (i) => {
-    const allowed = !finished && (i.user_id === me.id || isSeller) && status !== 'offen';
-    const box = h('input', { type: 'checkbox', disabled: !allowed });
+    const restLater = i.source === 'rest' && status !== 'auszahlung';
+    const allowed = !finished && !restLater && (i.user_id === me.id || isSeller) && status !== 'offen';
+    const box = h('input', { type: 'checkbox', disabled: !allowed, title: restLater ? 'Rest wird mit der Auszahlung ausgehändigt' : '' });
     box.checked = !!i.picked_up_at;
     box.addEventListener('change', async () => {
       try {
@@ -645,7 +651,7 @@ async function viewRun(id) {
             h('ul', { class: 'list' }, u.list.map((i) => h('li', { class: 'small' },
               h('label', { class: 'row', style: 'flex-wrap:nowrap' }, pickToggle(i),
                 `${zenyFmt.format(i.share)}× ${dropById.get(i.drop_id).name}`,
-                i.source === 'rest' ? h('span', { class: 'badge' }, 'Rest') : null),
+                i.source === 'rest' ? h('span', { class: 'badge' }, status === 'verkauf' ? 'Rest · bei Auszahlung' : 'Rest') : null),
             ))),
           );
         })),
@@ -996,8 +1002,9 @@ async function viewRun(id) {
     abholung: 'Jeder holt seinen Anteil im Guild Storage ab und hakt ihn ab (Admin und Verkäufer können für alle abhaken). ' +
       'Übrige Drops kann jedes Party-Mitglied mit „Nehme ich“ übernehmen – wer zuerst kommt, zahlt den Partypreis. ' +
       'Mit „Verkauf & Rest“ ist Schluss.',
-    verkauf: 'Übrige Drops verkaufen (Erlös eintragen) oder nützlichen Rest gratis und zufällig an die Teilnehmer verteilen – jeder Eintrag geht komplett an eine Person.',
-    auszahlung: 'Kasse und Verkäufe werden ausgezahlt. Admin oder Verkäufer haken pro Teilnehmer „Ausgezahlt“ ab.',
+    verkauf: 'Übrige Drops verkaufen (Erlös eintragen) oder nützlichen Rest gratis und zufällig an die Teilnehmer verteilen – jeder Eintrag geht komplett an eine Person. ' +
+      'Der Rest wird mit der Auszahlung ausgehändigt.',
+    auszahlung: 'Kasse und Verkäufe werden ausgezahlt und Rest-Items ausgehändigt. Admin oder Verkäufer haken pro Teilnehmer „Ausgezahlt“ und die Ausgabe ab.',
     beendet: `Run beendet${run.finished_at ? ' am ' + date(run.finished_at) : ''}.`,
   };
 
