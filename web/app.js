@@ -566,7 +566,18 @@ async function viewParty(id) {
     h('div', { class: 'panel' }, runList),
     h('h2', {}, `Mitglieder (${members.length})`),
     h('div', { class: 'panel' }, memberList, addMember),
-    h('h2', {}, `Müll-Liste (${trash.length})`),
+    h('div', { class: 'row spread' },
+      h('h2', {}, `Müll-Liste (${trash.length})`),
+      isAdmin && trash.length ? h('button', {
+        class: 'small danger',
+        onclick: action(async () => {
+          if (!await confirmBox('Müll-Liste leeren', `Alle ${trash.length} Einträge von der Müll-Liste der Party entfernen? ` +
+            'Bereits verkaufter Müll in Runs bleibt verkauft.', 'Liste leeren', true)) return;
+          await q(sb.from('party_trash').delete().eq('party_id', id));
+          toast('Müll-Liste geleert');
+          rerender();
+        }),
+      }, 'Müll-Liste leeren') : null),
     h('div', { class: 'panel' },
       h('p', { class: 'muted small', style: 'margin-top:0' },
         'Müll wird beim Würfeln automatisch an NPC verkauft – außer bei Wunschlisten-Konflikt, Interesse oder Zuweisung.'),
