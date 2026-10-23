@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(supabase functions serve:*)",
+      "Bash(supabase db diff:*)",
+      "Bash(supabase migration new:*)",
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./supabase/functions/.env)",
+      "Bash(curl*arcadia-online.org*)"
+    ],
+    "ask": [
+      "Bash(supabase db push:*)",
+      "Bash(supabase secrets set:*)",
+      "Bash(supabase functions deploy:*)",
+      "Bash(git push:*)"
+    ]
+  }
+}

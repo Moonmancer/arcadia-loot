@@ -1,0 +1,4 @@
+project_id = "arcadia-loot"
+
+[functions.sync-arcadia]
+verify_jwt = false
