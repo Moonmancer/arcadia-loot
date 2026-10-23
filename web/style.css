@@ -186,6 +186,7 @@ button.chip.toggle { cursor: pointer; font: inherit; font-size: 12px; }
 .modal p { margin: 0 0 10px; }
 .dialog-issues { margin: 0 0 12px; padding-left: 20px; color: var(--accent); }
 .dialog-issues li + li { margin-top: 4px; }
+.dialog-issues li { overflow-wrap: anywhere; }
 .dialog-field { margin-bottom: 10px; }
 .dialog-option { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
 .dialog-option input { margin-top: 3px; }

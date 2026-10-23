@@ -755,6 +755,16 @@ async function viewRun(id) {
   // als Funktion, weil die Müll-Markierung ohne Neuladen geändert wird
   const trashToSell = () => (trashPhase ? drops.filter((d) => trash.has(d.item_id) && d.sold_price == null && !trashBlock(d)) : []);
 
+  // Einträge für die Dialog-Listen: jedes betroffene Item einzeln, damit man es in der Tabelle findet
+  const dropLabel = (d) => `${zenyFmt.format(d.amount)}× ${d.name}`;
+  const shareLabel = (i) => `${i.profiles.display_name}: ${zenyFmt.format(i.share)}× ${dropById.get(i.drop_id).name}` +
+    (i.source === 'rest' ? ' (Rest)' : '');
+  const conflictLabel = (d) => `⚠ ${dropLabel(d)} – ` + {
+    wunschliste: `auf der Wunschliste von ${(conflictBy.get(d.id) || []).join(', ')}`,
+    interesse: `Interesse von ${(byDrop.get(d.id) || []).map((i) => i.profiles.display_name).join(', ')}`,
+    zuweisung: 'direkt zugewiesen',
+  }[trashBlock(d)];
+
   const goTo = async (to) => {
     const n = await q(sb.rpc('set_run_status', { p_run: id, p_status: to }));
     rerender();
@@ -809,12 +819,15 @@ async function viewRun(id) {
         const r = await dialog({
           title: 'Weiter: Müll verkaufen',
           text: sell.length
-            ? `${sell.length} Müll-Drop(s) werden für ${zeny(npcSum(sell))} an NPC verkauft.`
+            ? [(() => { const n = sell.filter((d) => npcSell(d.npc_price) != null).length;
+                return n ? `${n} Müll-Drop(s) werden für ${zeny(npcSum(sell))} an NPC verkauft.` : ''; })(),
+              (() => { const n = sell.filter((d) => npcSell(d.npc_price) == null).length;
+                return n ? `${n} ohne NPC-Preis werden entsorgt.` : ''; })()].filter(Boolean).join(' ')
             : 'Es ist kein Müll zu verkaufen.',
           items: [
             ...sell.map((d) => `${zenyFmt.format(d.amount)}× ${d.name} → ` +
               (npcSell(d.npc_price) != null ? zeny(d.amount * npcSell(d.npc_price)) : 'entsorgt (kein NPC-Preis)')),
-            ...(blocked.length ? [`${blocked.length} Müll-Drop(s) bleiben wegen Konflikt (Wunschliste, Interesse oder Zuweisung)`] : []),
+            ...(blocked.length ? [`${blocked.length} Müll-Drop(s) bleiben wegen Konflikt:`, ...blocked.map(conflictLabel)] : []),
           ],
           buttons: [{ label: sell.length ? 'Müll verkaufen & weiter' : 'Weiter', value: 'go', primary: true }],
         });
@@ -869,7 +882,7 @@ async function viewRun(id) {
             const r = await dialog({
               title: 'Weiter: Verkauf & Rest',
               text: 'Noch nicht alles ist abgeholt.',
-              items: [`${openPickups.length} Anteil(e) nicht abgeholt`],
+              items: [`${openPickups.length} Anteil(e) nicht abgeholt:`, ...openPickups.map(shareLabel)],
               fields: pickupField(openPickups),
               buttons: [{ label: isSeller ? 'Ausführen & weiter' : 'Trotzdem weiter', value: 'go', primary: true }],
             });
@@ -910,8 +923,9 @@ async function viewRun(id) {
               title: 'Weiter: Auszahlung',
               text: 'Es sind noch Entscheidungen offen.',
               items: [
-                ...(unsold.length ? [`${unsold.length} Drop(s) weder verkauft noch als Rest verteilt`] : []),
-                ...(openPickups.length ? [`${openPickups.length} Anteil(e) nicht abgeholt`] : []),
+                ...(unsold.length ? [`${unsold.length} Drop(s) weder verkauft noch als Rest verteilt:`,
+                  ...unsold.map((d) => dropLabel(d) + (npcSell(d.npc_price) == null ? ' (kein NPC-Preis)' : ''))] : []),
+                ...(openPickups.length ? [`${openPickups.length} Anteil(e) nicht abgeholt:`, ...openPickups.map(shareLabel)] : []),
               ],
               fields,
               buttons: [{ label: isSeller ? 'Ausführen & weiter' : 'Trotzdem weiter', value: 'go', primary: true }],
@@ -944,7 +958,7 @@ async function viewRun(id) {
             text: unpaid.length || openAll.length ? 'Es ist noch etwas offen.' : 'Danach ist der Run nur noch lesbar.',
             items: [
               ...(unpaid.length ? [`Nicht ausgezahlt: ${unpaid.map((p) => p.profiles.display_name).join(', ')}`] : []),
-              ...(openAll.length ? [`${openAll.length} Anteil(e) nicht ausgehändigt`] : []),
+              ...(openAll.length ? [`${openAll.length} Anteil(e) nicht ausgehändigt:`, ...openAll.map(shareLabel)] : []),
             ],
             fields,
             buttons: [{ label: fields.length ? 'Ausführen & beenden' : 'Run beenden', value: 'go', primary: true }],
