@@ -525,7 +525,8 @@ function stepper(status, hasDrops) {
     ['Auszahlung', phase > 4],
     ['Beendet', phase >= 5],
   ];
-  const current = status === 'offen' ? (hasDrops ? 2 : 1) : status === 'muell' ? 2 : status === 'beendet' ? 7 : phase + 2;
+  // hervorgehoben wird die aktuelle Phase („Ausgewürfelt“ ist nur der Übergang und nie aktuell)
+  const current = { offen: hasDrops ? 1 : 0, muell: 2, abholung: 4, verkauf: 5, auszahlung: 6, beendet: 7 }[status];
   return h('ol', { class: 'stepper' }, steps.map(([label, done], i) =>
     h('li', { class: i === current ? 'current' : done ? 'done' : '' }, label)));
 }
