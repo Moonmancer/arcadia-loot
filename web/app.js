@@ -687,7 +687,29 @@ async function viewRun(id) {
     rerender();
     return n;
   };
-  const changeStatus = (to) => action(() => goTo(to));
+  const changeStatus = (to) => action(async () => {
+    if (await resolvePendingPrices()) await goTo(to);
+  });
+
+  // Vor jedem Phasenwechsel: geänderte, aber noch nicht übernommene Stückpreise übernehmen oder verwerfen
+  const priceInputs = [];
+  const pendingPrices = () => priceInputs.filter(({ inp }) =>
+    inp.value.trim() !== inp.defaultValue.trim() && parseZeny(inp.value) !== parseZeny(inp.defaultValue));
+  const resolvePendingPrices = async () => {
+    const list = pendingPrices();
+    if (!list.length) return true;
+    const r = await dialog({
+      title: 'Nicht übernommene Preise',
+      text: `${list.length} Stückpreis(e) wurden geändert, aber noch nicht mit ✎ übernommen.`,
+      items: list.map(({ d, inp }) => `${d.name}: ${inp.defaultValue || 'Marktpreis'} → ${inp.value.trim() || 'Marktpreis'}`),
+      buttons: [{ label: 'Verwerfen', value: 'drop' }, { label: 'Übernehmen', value: 'save', primary: true }],
+    });
+    if (!r) return false;
+    if (r.button === 'save') {
+      for (const { d, inp } of list) await q(sb.rpc('set_price', { p_drop: d.id, p_price: parseZeny(inp.value) }));
+    }
+    return true;
+  };
 
   // Behebungen, die die Phasen-Dialoge anbieten
   const markPicked = async (list) => {
@@ -707,6 +729,7 @@ async function viewRun(id) {
     phaseButtons.push(h('button', {
       class: 'primary',
       onclick: action(async () => {
+        if (!await resolvePendingPrices()) return;
         const blocked = drops.filter((d) => trash.has(d.item_id) && d.sold_price == null && trashBlock(d));
         const r = await dialog({
           title: 'Weiter: Müll verkaufen',
@@ -729,6 +752,7 @@ async function viewRun(id) {
     phaseButtons.push(h('button', {
       class: 'small',
       onclick: action(async () => {
+        if (!await resolvePendingPrices()) return;
         if (await confirmBox('Zurück zu „Loot & Interessen“',
           'Die Müll-Verkäufe dieses Runs werden rückgängig gemacht.', 'Zurück')) await goTo('offen');
       }),
@@ -738,6 +762,7 @@ async function viewRun(id) {
     phaseButtons.push(h('button', {
       class: 'primary',
       onclick: action(async () => {
+        if (!await resolvePendingPrices()) return;
         const withInterest = drops.filter((d) => (byDrop.get(d.id) || []).length).length;
         const free = drops.filter((d) => !byDrop.has(d.id) && d.sold_price == null).length;
         if (!await confirmBox('Auswürfeln',
@@ -763,6 +788,7 @@ async function viewRun(id) {
       phaseButtons.push(h('button', {
         class: 'primary',
         onclick: action(async () => {
+          if (!await resolvePendingPrices()) return;
           if (openPickups.length) {
             const r = await dialog({
               title: 'Weiter: Verkauf & Rest',
@@ -781,6 +807,7 @@ async function viewRun(id) {
       phaseButtons.push(h('button', {
         class: 'primary',
         onclick: action(async () => {
+          if (!await resolvePendingPrices()) return;
           if (unsold.length || openPickups.length) {
             // Vorauswahl aus der Tabelle: markierte Rest-Drops verteilen, übrige mit NPC-Preis an NPC
             const presetRest = unsold.filter((d) => restPick.has(d.id));
@@ -827,6 +854,7 @@ async function viewRun(id) {
       phaseButtons.push(h('button', {
         class: 'primary',
         onclick: action(async () => {
+          if (!await resolvePendingPrices()) return;
           const unpaid = participants.filter((p) => !p.paid_at);
           const fields = [];
           if (isSeller && unpaid.length) {
@@ -978,13 +1006,22 @@ async function viewRun(id) {
     rerender();
   });
 
-  const editPrice = (d) => action(async () => {
-    const input = await textBox(`Stückpreis für ${d.name}`, 'Zeny pro Stück. Leer lassen, um wieder den Marktpreis zu verwenden.',
-      d.price_override ?? unitPrice(d) ?? '', 'Speichern', 'Marktpreis');
-    if (input === null) return;
-    await q(sb.rpc('set_price', { p_drop: d.id, p_price: parseZeny(input) }));
-    rerender();
-  });
+  // Admins: Stückpreis direkt im Feld bearbeiten, ✎ oder Enter übernimmt ihn als festen Preis (leer = Marktpreis)
+  const priceEditor = (d) => {
+    const inp = h('input', {
+      type: 'text', inputmode: 'numeric', class: 'price-input',
+      value: unit(d) != null ? zenyFmt.format(unit(d)) : '', placeholder: 'Marktpreis',
+      title: 'Stückpreis in Zeny – leer lassen für den Marktpreis',
+    });
+    const save = action(async () => {
+      await q(sb.rpc('set_price', { p_drop: d.id, p_price: parseZeny(inp.value) }));
+      toast(inp.value.trim() ? `Preis für ${d.name} festgelegt` : `${d.name}: wieder Marktpreis`);
+      rerender();
+    });
+    inp.addEventListener('keydown', (e) => e.key === 'Enter' && save(e));
+    priceInputs.push({ d, inp });
+    return [inp, h('button', { class: 'link small', title: 'Preis übernehmen', onclick: save }, '✎')];
+  };
 
   const assignSelect = (d) => {
     const sel = h('select', { title: 'Direkt zuweisen (wird nicht gewürfelt)' },
@@ -1095,16 +1132,17 @@ async function viewRun(id) {
         : open ? h('span', { class: 'muted small' }, '–') : h('span', { class: 'muted small' }, 'übrig'));
     }
 
+    const priceEditable = isAdmin && ['offen', 'muell', 'abholung', 'verkauf'].includes(status);
+    const npcFallback = d.price_override == null && !(d.is_plain && unitPrice(d) != null) && npcSell(d.npc_price) != null;
+    const priceTag = d.price_override != null
+      ? h('span', { class: 'badge warn badge-before', title: 'Vom Admin festgelegt' }, 'fest')
+      : npcFallback
+        ? h('span', { class: 'badge badge-before', title: d.is_plain ? 'Kein Marktpreis – NPC-Verkaufspreis als Ersatz'
+            : 'Marktpreis gilt nur für normale Items – NPC-Verkaufspreis als Ersatz' }, 'NPC')
+        : null;
     const priceCell = h('td', { class: 'num hide-sm' },
-      d.price_override != null
-        ? h('span', { title: 'Vom Admin festgelegt' }, h('span', { class: 'badge warn badge-before' }, 'fest'), zeny(d.price_override))
-        : d.is_plain && unitPrice(d) != null ? zeny(unitPrice(d))
-        : npcSell(d.npc_price) != null
-          ? h('span', { title: d.is_plain ? 'Kein Marktpreis – NPC-Verkaufspreis als Ersatz' : 'Marktpreis gilt nur für normale Items – NPC-Verkaufspreis als Ersatz' },
-              h('span', { class: 'badge badge-before' }, 'NPC'), zeny(npcSell(d.npc_price)))
-          : '–',
-      isAdmin && ['offen', 'muell', 'abholung', 'verkauf'].includes(status)
-        ? h('button', { class: 'link small', title: 'Preis überschreiben', onclick: editPrice(d) }, '✎') : null,
+      priceTag,
+      priceEditable ? priceEditor(d) : zeny(unit(d)),
       isAdmin ? h('a', {
         class: 'small', style: 'padding:0 4px;text-decoration:none',
         href: `https://arcadia-market.de/sells/item_id/${encodeURIComponent(d.item_id)}`,

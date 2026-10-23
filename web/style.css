@@ -135,6 +135,7 @@ td.num, th.num { text-align: right; white-space: nowrap; font-variant-numeric: t
   margin-left: 6px;
 }
 .badge.warn { color: var(--accent); border-color: var(--accent); }
+input.price-input { width: 92px; flex: none; padding: 3px 6px; text-align: right; font-variant-numeric: tabular-nums; }
 .badge.badge-before { margin: 0 6px 0 0; }   /* vor Zahlen, damit rechtsbündige Werte nicht springen */
 .badge.good { color: var(--good); border-color: var(--good); }
 

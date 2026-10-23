@@ -101,6 +101,8 @@ Fertig:
 - Keine Browser-Dialoge: `dialog()` / `confirmBox()` / `textBox()` in `app.js`. Phasenwechsel zeigen offene
   Punkte und bieten Behebungen an (Abholungen abhaken, übrige Drops: Vorauswahl / alle an NPC / alle als Rest,
   Auszahlungen abhaken), „Ausführen & weiter“ führt sie aus und wechselt dann die Phase.
+- Admins bearbeiten den Stückpreis direkt im Feld der Loot-Liste; ✎ oder Enter übernimmt (leer = Marktpreis).
+  Geänderte, nicht übernommene Felder werden vor jedem Phasenwechsel abgefragt (Übernehmen / Verwerfen).
 - Müll-Vorschläge (016): `trash_suggestions(run)` = Items, die in den letzten 10 Runs (auszahlung/beendet,
   inkl. aktuellem) bei jedem Vorkommen an NPC gingen, in ≥ 2 Runs, noch nicht auf der Müll-Liste.
   Frontend: Vorschlagsblock für Admins in beendeten Runs, vorausgewählt.
