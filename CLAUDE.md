@@ -69,12 +69,12 @@ Fertig:
   wechselt nach `abholung`). `run_participants` (beim Anlegen alle Mitglieder, in `offen` vom Verwalter
   änderbar; nur Teilnehmer: Interesse, Zuweisung, Rest, Kassenanteil; `paid_at` via `set_paid`, nur
   Admin/Verkäufer). `interests.picked_up_at` via `set_picked_up` (selbst oder Admin/Verkäufer).
-  Rest: `split_rest` – jeder Drop komplett an einen Teilnehmer, reihum in Zufallsreihenfolge,
+  Rest: `split_rest` – jeder Drop komplett an einen Teilnehmer, reihum; wer im Run weniger Rest hat zuerst, sonst Zufall (007),
   gratis (`source = 'rest'`, kein Partypreis); `undo_rest` solange nicht abgeholt.
 - **PostgREST:** `interests` und `run_participants` haben je zwei FKs auf `profiles` → Embedding mit
   Hinweis, z. B. `profiles!interests_user_id_fkey(display_name)`.
 - Migrationen lokal mit PGlite getestet (Auth-Stubs).
-- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–006 eingespielt,
+- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–007 eingespielt,
   `sync-arcadia` deployt, Secrets + Vault gesetzt, Items/Icons/Preise geladen, Cron-Jobs aktiv.
   GitHub-Repo `Moonmancer/arcadia-loot` (öffentlich); Pages aktiv (Source: GitHub Actions).
 
