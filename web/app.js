@@ -355,8 +355,14 @@ async function viewRun(id) {
   });
 
   const toggleWish = (d) => action(async () => {
-    if (wished.has(d.item_id)) await q(sb.from('wishlist').delete().eq('item_id', d.item_id).eq('user_id', me.id));
-    else await q(sb.from('wishlist').insert({ item_id: d.item_id }));
+    const base = d.name.replace(/\s*\[\d+\]$/, '');
+    if (wished.has(d.item_id)) {
+      await q(sb.from('wishlist').delete().eq('item_id', d.item_id).eq('user_id', me.id));
+      toast(`${base} von der Wunschliste entfernt`);
+    } else {
+      await q(sb.from('wishlist').insert({ item_id: d.item_id }));
+      toast(open ? `${base} auf die Wunschliste gesetzt – Interesse automatisch eingetragen` : `${base} auf die Wunschliste gesetzt`);
+    }
     rerender();
   });
 
@@ -382,11 +388,14 @@ async function viewRun(id) {
         d.name,
         !d.is_plain ? h('span', { class: 'badge warn', title: [d.attributes, d.cards].filter(Boolean).join(' · ') },
           'Attr./Karten') : null,
-        h('button', {
-          class: 'link small',
-          title: wished.has(d.item_id) ? 'Von Wunschliste entfernen' : 'Auf Wunschliste setzen',
-          onclick: toggleWish(d),
-        }, wished.has(d.item_id) ? '★' : '☆'),
+        // nur Items, die in der Item-Datenbank stehen (Wunschliste hat FK auf items)
+        d.item_type != null ? h('div', {},
+          h('button', {
+            class: 'wish' + (wished.has(d.item_id) ? ' on' : ''),
+            title: wished.has(d.item_id) ? 'Von deiner Wunschliste entfernen' : 'Auf deine Wunschliste setzen',
+            onclick: toggleWish(d),
+          }, wished.has(d.item_id) ? '★ Wunschliste' : '☆ Wunschliste'),
+        ) : null,
       ),
       h('td', { class: 'num' }, zenyFmt.format(d.amount)),
       h('td', { class: 'num hide-sm', title: d.is_plain ? '' : 'Marktpreis gilt nur für normale Items' },
@@ -483,7 +492,7 @@ async function viewRun(id) {
       ),
     ),
     open ? h('p', { class: 'muted small' },
-      'Markiere, was du willst. ★ = automatisch über deine Wunschliste. Beim Würfeln wird die Menge gleichmäßig auf alle Interessenten verteilt, den Rest bekommen die höchsten Würfe.') : null,
+      'Markiere, was du willst. ★ = automatisch über deine Wunschliste; „☆ Wunschliste" setzt ein Item für alle künftigen Runs darauf. Beim Würfeln wird die Menge gleichmäßig auf alle Interessenten verteilt, den Rest bekommen die höchsten Würfe.') : null,
     importBox ? h('div', { style: 'margin:14px 0' }, importBox) : null,
     summary,
     drops.length ? h('div', { class: 'row', style: 'margin:18px 0 10px' }, filter,

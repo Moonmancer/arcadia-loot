@@ -58,7 +58,7 @@ Fertig:
 - Migrationen lokal mit PGlite getestet (Auth-Stubs).
 - **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–003 eingespielt,
   `sync-arcadia` deployt, Secrets + Vault gesetzt, Items/Icons/Preise geladen, Cron-Jobs aktiv.
-  GitHub-Repo `Moonmancer/arcadia-loot` (öffentlich); Pages noch nicht eingeschaltet.
+  GitHub-Repo `Moonmancer/arcadia-loot` (öffentlich); Pages aktiv (Source: GitHub Actions).
 
 - Frontend `web/` (statisch, ES-Module, supabase-js 2.45.4 von jsdelivr, kein Build):
   `config.js` (URL + publishable key), `app.js` (Hash-Routing `#/`, `#/party/:id`, `#/run/:id`,
@@ -69,7 +69,7 @@ Fertig:
 Offen (nächste Schritte):
 1. Discord-Provider in Supabase aktivieren; *Authentication → URL Configuration*: Site URL
    `https://moonmancer.github.io/arcadia-loot/`, Redirect URLs zusätzlich `http://localhost:5500/`.
-2. GitHub Pages einschalten (Source: GitHub Actions), danach echten Login-Durchlauf testen.
+2. Echten Login-Durchlauf testen (Pages ist live: https://moonmancer.github.io/arcadia-loot/).
 3. Discord-Gildenprüfung beim Login.
 4. Free-Projekte pausieren nach 7 Tagen Inaktivität – prüfen, ob die Cron-Jobs das verhindern, sonst Keep-alive.
 
