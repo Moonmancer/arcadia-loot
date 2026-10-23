@@ -159,25 +159,35 @@ async function viewParties() {
             h('div', { class: 'muted small' },
               `${p.party_members[0]?.count ?? 0} Mitglieder · ${p.runs[0]?.count ?? 0} Runs`),
           )))
-      : h('p', { class: 'muted' }, 'Du bist noch in keiner Party. Lege eine an oder lass dich vom Leiter einer Party hinzufügen.'),
+      : h('p', { class: 'muted' }, 'Du bist noch in keiner Party. Lege eine an oder lass dich von einem Admin einer Party hinzufügen.'),
     h('h2', {}, 'Neue Party'),
     h('div', { class: 'row' }, name, h('button', { class: 'primary', onclick: create }, 'Anlegen')),
   );
 }
 
+const ROLES = { admin: 'Admin', verkaeufer: 'Verkäufer', teilnehmer: 'Teilnehmer' };
+const ROLE_ORDER = { admin: 0, verkaeufer: 1, teilnehmer: 2 };
+const byRoleAndName = (a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role]
+  || a.profiles.display_name.localeCompare(b.profiles.display_name);
+
+// Zeny-Eingabe: "2.300", "2300 z" usw. → Zahl; leer → null
+function parseZeny(text) {
+  const digits = String(text ?? '').replace(/[^\d]/g, '');
+  return digits === '' ? null : Number(digits);
+}
+
 async function viewParty(id) {
   id = Number(id);
   const [party, members, runs] = await Promise.all([
-    q(sb.from('parties').select('id, name, created_by').eq('id', id).maybeSingle()),
+    q(sb.from('parties').select('id, name, created_by, party_price_pct').eq('id', id).maybeSingle()),
     q(sb.from('party_members').select('user_id, role, profiles(display_name, avatar_url)').eq('party_id', id)),
     q(sb.from('runs').select('id, title, status, created_at, drops(count)').eq('party_id', id)
       .order('created_at', { ascending: false })),
   ]);
   if (!party) return h('p', { class: 'muted' }, 'Party nicht gefunden oder kein Zugriff.');
 
-  const isLeader = members.some((m) => m.user_id === me.id && m.role === 'leader');
-  members.sort((a, b) => (a.role === b.role ? 0 : a.role === 'leader' ? -1 : 1)
-    || a.profiles.display_name.localeCompare(b.profiles.display_name));
+  const isAdmin = members.some((m) => m.user_id === me.id && m.role === 'admin');
+  members.sort(byRoleAndName);
 
   // Runs
   const title = h('input', { type: 'text', placeholder: 'z. B. Glast Heim, 23.10.', maxlength: 80 });
@@ -197,11 +207,25 @@ async function viewParty(id) {
     : h('p', { class: 'muted' }, 'Noch keine Runs.');
 
   // Mitglieder
+  const roleControl = (m) => {
+    if (!isAdmin) return h('span', { class: 'badge' + (m.role === 'admin' ? ' warn' : '') }, ROLES[m.role]);
+    const sel = h('select', {}, Object.entries(ROLES).map(([v, label]) => h('option', { value: v }, label)));
+    sel.value = m.role;
+    sel.addEventListener('change', async () => {
+      try {
+        await q(sb.from('party_members').update({ role: sel.value }).eq('party_id', id).eq('user_id', m.user_id));
+        toast(`${m.profiles.display_name} ist jetzt ${ROLES[sel.value]}`);
+      } catch (e) { toast(e.message, true); }
+      rerender();
+    });
+    return sel;
+  };
+
   const memberList = h('ul', { class: 'list' }, members.map((m) => h('li', {},
     m.profiles.avatar_url ? h('img', { class: 'avatar', src: m.profiles.avatar_url, alt: '' }) : null,
     h('span', {}, m.profiles.display_name),
-    m.role === 'leader' ? h('span', { class: 'badge warn' }, 'Leiter') : null,
-    h('span', { style: 'margin-left:auto' },
+    h('span', { class: 'row', style: 'margin-left:auto' },
+      roleControl(m),
       m.user_id === me.id
         ? h('button', {
             class: 'small danger',
@@ -211,7 +235,7 @@ async function viewParty(id) {
               location.hash = '#/';
             }),
           }, 'Verlassen')
-        : isLeader
+        : isAdmin
           ? h('button', {
               class: 'small danger',
               onclick: action(async () => {
@@ -225,7 +249,7 @@ async function viewParty(id) {
   )));
 
   let addMember = null;
-  if (isLeader) {
+  if (isAdmin) {
     const search = h('input', { type: 'search', placeholder: 'Spieler suchen (Discord-Name)' });
     const results = h('ul', { class: 'list' });
     const memberIds = new Set(members.map((m) => m.user_id));
@@ -255,7 +279,25 @@ async function viewParty(id) {
       h('p', { class: 'muted small' }, 'Nur Spieler, die sich schon einmal angemeldet haben, sind auffindbar.'));
   }
 
-  const rename = isLeader && h('button', {
+  // Partypreis
+  let priceSetting;
+  if (isAdmin) {
+    const pct = h('input', { type: 'number', min: 0, max: 100, value: party.party_price_pct, style: 'width:80px' });
+    priceSetting = h('div', { class: 'row' },
+      h('span', {}, 'Partypreis'), pct, h('span', {}, '% vom Marktpreis'),
+      h('button', {
+        class: 'small',
+        onclick: action(async () => {
+          await q(sb.from('parties').update({ party_price_pct: Number(pct.value) }).eq('id', id));
+          toast('Partypreis gespeichert');
+          rerender();
+        }),
+      }, 'Speichern'));
+  } else {
+    priceSetting = h('span', {}, `Partypreis: ${party.party_price_pct} % vom Marktpreis`);
+  }
+
+  const rename = isAdmin && h('button', {
     class: 'link small',
     onclick: action(async () => {
       const n = prompt('Neuer Name der Party', party.name);
@@ -265,7 +307,7 @@ async function viewParty(id) {
     }),
   }, 'umbenennen');
 
-  const del = isLeader && h('button', {
+  const del = isAdmin && h('button', {
     class: 'small danger',
     onclick: action(async () => {
       if (!confirm(`Party „${party.name}" mit allen Runs endgültig löschen?`)) return;
@@ -277,12 +319,16 @@ async function viewParty(id) {
   return h('div', {},
     h('p', { class: 'small' }, h('a', { href: '#/' }, '← Partys')),
     h('div', { class: 'row spread' }, h('h1', {}, party.name, rename), del),
+    h('div', { class: 'muted small' }, priceSetting),
     h('h2', {}, 'Runs'),
     h('div', { class: 'row', style: 'margin-bottom:10px' }, title,
       h('button', { class: 'primary', onclick: createRun }, 'Neuer Run')),
     h('div', { class: 'panel' }, runList),
     h('h2', {}, `Mitglieder (${members.length})`),
     h('div', { class: 'panel' }, memberList, addMember),
+    h('p', { class: 'muted small' },
+      'Admin: Mitglieder, Rollen, Partypreis, alle Runs, Preise überschreiben, Items zuweisen. ' +
+      'Verkäufer: Verkaufserlöse erfassen. Teilnehmer: Interesse eintragen, eigene Runs anlegen.'),
   );
 }
 
@@ -290,20 +336,26 @@ async function viewParty(id) {
 
 async function viewRun(id) {
   id = Number(id);
-  const run = await q(sb.from('runs').select('id, title, status, created_by, created_at, rolled_at, party_id, parties(name)')
+  const run = await q(sb.from('runs')
+    .select('id, title, status, created_by, created_at, rolled_at, party_id, parties(name, party_price_pct)')
     .eq('id', id).maybeSingle());
   if (!run) return h('p', { class: 'muted' }, 'Run nicht gefunden oder kein Zugriff.');
 
-  const [drops, interests, myRole, wishlist] = await Promise.all([
+  const [drops, interests, members, wishlist] = await Promise.all([
     q(sb.from('drop_overview').select('*').eq('run_id', id).order('pos')),
     q(sb.from('interests').select('drop_id, user_id, roll, share, source, profiles(display_name), drops!inner(run_id)')
       .eq('drops.run_id', id)),
-    q(sb.from('party_members').select('role').eq('party_id', run.party_id).eq('user_id', me.id).maybeSingle()),
+    q(sb.from('party_members').select('user_id, role, profiles(display_name)').eq('party_id', run.party_id)),
     q(sb.from('wishlist').select('item_id')),
   ]);
 
   const open = run.status === 'offen';
-  const canManage = run.created_by === me.id || myRole?.role === 'leader';
+  const myRole = members.find((m) => m.user_id === me.id)?.role;
+  const isAdmin = myRole === 'admin';
+  const isSeller = isAdmin || myRole === 'verkaeufer';
+  const canManage = run.created_by === me.id || isAdmin;
+  const pct = run.parties.party_price_pct;
+  members.sort(byRoleAndName);
   const wished = new Set(wishlist.map((w) => w.item_id));
   const byDrop = new Map();
   for (const i of interests) {
@@ -314,7 +366,10 @@ async function viewRun(id) {
     list.sort((a, b) => (b.roll ?? 0) - (a.roll ?? 0) || a.profiles.display_name.localeCompare(b.profiles.display_name));
   }
 
-  const value = (d, amount = d.amount) => (d.is_plain && unitPrice(d) != null ? unitPrice(d) * amount : null);
+  // Stückpreis: Override des Admins, sonst Marktpreis (nur für normale Items aussagekräftig)
+  const unit = (d) => d.price_override ?? (d.is_plain ? unitPrice(d) : null);
+  const value = (d, amount = d.amount) => (unit(d) != null ? unit(d) * amount : null);
+  const partyPrice = (d, amount = d.amount) => (unit(d) != null ? Math.round(unit(d) * amount * pct / 100) : null);
   const total = drops.reduce((s, d) => s + (value(d) ?? 0), 0);
 
   // Import
@@ -366,6 +421,40 @@ async function viewRun(id) {
     rerender();
   });
 
+  const editPrice = (d) => action(async () => {
+    const input = prompt(`Stückpreis für ${d.name} (leer = Marktpreis)`, d.price_override ?? unitPrice(d) ?? '');
+    if (input === null) return;
+    await q(sb.rpc('set_price', { p_drop: d.id, p_price: parseZeny(input) }));
+    rerender();
+  });
+
+  const assignSelect = (d) => {
+    const sel = h('select', { title: 'Direkt zuweisen (wird nicht gewürfelt)' },
+      h('option', { value: '' }, open ? 'würfeln' : '– niemand –'),
+      members.map((m) => h('option', { value: m.user_id }, '→ ' + m.profiles.display_name)));
+    sel.value = d.assigned_to ?? '';
+    sel.addEventListener('change', async () => {
+      try {
+        await q(sb.rpc('assign_drop', { p_drop: d.id, p_user: sel.value || null }));
+      } catch (e) { toast(e.message, true); }
+      rerender();
+    });
+    return sel;
+  };
+
+  const saleControl = (d) => {
+    if (!isSeller) return d.sold_price != null ? zeny(d.sold_price) : null;
+    const inp = h('input', { type: 'text', inputmode: 'numeric', placeholder: 'Erlös', style: 'width:110px;flex:none',
+      value: d.sold_price != null ? zenyFmt.format(d.sold_price) : '' });
+    const save = action(async () => {
+      await q(sb.rpc('set_sale', { p_drop: d.id, p_price: parseZeny(inp.value) }));
+      toast(inp.value.trim() ? 'Verkauf gespeichert' : 'Verkauf entfernt');
+      rerender();
+    });
+    inp.addEventListener('keydown', (e) => e.key === 'Enter' && save(e));
+    return h('div', { class: 'row', style: 'flex-wrap:nowrap' }, inp, h('button', { class: 'small', onclick: save }, '✓'));
+  };
+
   // Filter
   const filter = h('input', { type: 'search', placeholder: 'Filtern …' });
   const onlyInterest = h('input', { type: 'checkbox' });
@@ -373,14 +462,45 @@ async function viewRun(id) {
   const rows = drops.map((d) => {
     const list = byDrop.get(d.id) || [];
     const mine = list.some((i) => i.user_id === me.id);
+    const assigned = d.assigned_to != null;
     const chips = h('div', { class: 'chips' }, list.map((i) => {
-      const cls = ['chip', i.user_id === me.id && 'me', !open && (i.share > 0 ? 'win' : 'lose')].filter(Boolean).join(' ');
-      const label = open
-        ? i.profiles.display_name + (i.source === 'wunschliste' ? ' ★' : '')
-        : `${i.profiles.display_name} ${i.roll}` + (d.amount > 1 ? ` → ${i.share}×` : '');
+      const done = !open || assigned;
+      const cls = ['chip', i.user_id === me.id && 'me', done && (i.share > 0 ? 'win' : 'lose')].filter(Boolean).join(' ');
+      let label = i.profiles.display_name;
+      if (i.source === 'zuweisung') label += ` → ${i.share}× (zugewiesen)`;
+      else if (!open) label += ` ${i.roll}` + (d.amount > 1 ? ` → ${i.share}×` : '');
+      else if (i.source === 'wunschliste') label += ' ★';
       return h('span', { class: cls, title: i.source === 'wunschliste' ? 'über Wunschliste' : '' }, label);
     }));
-    if (!list.length) chips.append(h('span', { class: 'muted small' }, open ? '–' : 'verkaufen'));
+    if (!list.length) {
+      chips.append(open
+        ? h('span', { class: 'muted small' }, '–')
+        : d.sold_price != null
+          ? h('span', { class: 'chip win' }, `verkauft ${zeny(d.sold_price)}`)
+          : h('span', { class: 'muted small' }, 'verkaufen'));
+    }
+
+    const priceCell = h('td', { class: 'num hide-sm' },
+      d.price_override != null
+        ? h('span', { title: 'Vom Admin festgelegt' }, zeny(d.price_override), h('span', { class: 'badge warn' }, 'fest'))
+        : d.is_plain ? zeny(unitPrice(d)) : h('span', { class: 'muted', title: 'Marktpreis gilt nur für normale Items' }, zeny(unitPrice(d))),
+      isAdmin ? h('button', { class: 'link small', title: 'Preis überschreiben', onclick: editPrice(d) }, '✎') : null);
+
+    const actions = [];
+    if (open && !assigned) {
+      actions.push(h('button', { class: 'small' + (mine ? ' on' : ''), onclick: toggleInterest(d, mine) }, mine ? 'Will ich ✓' : 'Will ich'));
+    }
+    if (!open && !list.length && (isSeller || d.sold_price != null)) actions.push(saleControl(d));
+    if (isAdmin) actions.push(assignSelect(d));
+    if (open && canManage) {
+      actions.push(h('button', {
+        class: 'link small', title: 'Drop löschen',
+        onclick: action(async () => {
+          await q(sb.from('drops').delete().eq('id', d.id));
+          rerender();
+        }),
+      }, '✕'));
+    }
 
     const tr = h('tr', {},
       h('td', { class: 'hide-sm' }, icon(d.icon)),
@@ -398,20 +518,11 @@ async function viewRun(id) {
         ) : null,
       ),
       h('td', { class: 'num' }, zenyFmt.format(d.amount)),
-      h('td', { class: 'num hide-sm', title: d.is_plain ? '' : 'Marktpreis gilt nur für normale Items' },
-        d.is_plain ? zeny(unitPrice(d)) : h('span', { class: 'muted' }, zeny(unitPrice(d)))),
-      h('td', { class: 'num hide-sm' }, d.amount > 1 ? zeny(value(d)) : ''),
+      priceCell,
+      h('td', { class: 'num hide-sm' }, zeny(value(d))),
+      h('td', { class: 'num' }, zeny(partyPrice(d))),
       h('td', {}, chips),
-      h('td', {}, open ? h('div', { class: 'row', style: 'flex-wrap:nowrap' },
-        h('button', { class: 'small' + (mine ? ' on' : ''), onclick: toggleInterest(d, mine) }, mine ? 'Will ich ✓' : 'Will ich'),
-        canManage ? h('button', {
-          class: 'link small', title: 'Drop löschen',
-          onclick: action(async () => {
-            await q(sb.from('drops').delete().eq('id', d.id));
-            rerender();
-          }),
-        }, '✕') : null,
-      ) : null),
+      h('td', {}, actions.length ? h('div', { class: 'row', style: 'flex-wrap:nowrap' }, actions) : null),
     );
     tr.dataset.search = d.name.toLowerCase();
     tr.dataset.interest = list.length ? '1' : '';
@@ -432,40 +543,68 @@ async function viewRun(id) {
         h('thead', {}, h('tr', {},
           h('th', { class: 'hide-sm' }), h('th', {}, 'Item'), h('th', { class: 'num' }, 'Menge'),
           h('th', { class: 'num hide-sm' }, 'Stückpreis'), h('th', { class: 'num hide-sm' }, 'Gesamt'),
+          h('th', { class: 'num', title: `${pct} % vom Gesamtpreis` }, `Partypreis ${pct} %`),
           h('th', {}, open ? 'Interessenten' : 'Ergebnis'), h('th', {}),
         )),
         h('tbody', {}, rows),
       ))
     : h('p', { class: 'muted' }, 'Noch keine Drops.');
 
-  // Ergebnis pro Person (nach dem Würfeln)
+  // Abrechnung: Empfänger zahlen den Partypreis in die Kasse, Kasse + Verkäufe werden geteilt
   let summary = null;
-  if (!open && drops.length) {
-    const dropById = new Map(drops.map((d) => [d.id, d]));
-    const people = new Map();
+  const settled = drops.filter((d) => !open || d.assigned_to != null);
+  if (drops.length && settled.length) {
+    const people = new Map(members.map((m) => [m.user_id, { name: m.profiles.display_name, items: [], pays: 0 }]));
+    let pot = 0;
+    let missingPrice = 0;
     for (const i of interests) {
-      if (!i.share) continue;
-      const d = dropById.get(i.drop_id);
-      if (!people.has(i.user_id)) people.set(i.user_id, { name: i.profiles.display_name, items: [], value: 0 });
-      const p = people.get(i.user_id);
+      const d = drops.find((x) => x.id === i.drop_id);
+      if (!i.share || (open && d.assigned_to == null)) continue;
+      const p = people.get(i.user_id) ?? { name: i.profiles.display_name, items: [], pays: 0 };
+      people.set(i.user_id, p);
       p.items.push(`${i.share}× ${d.name}`);
-      p.value += value(d, i.share) ?? 0;
+      const pp = partyPrice(d, i.share);
+      if (pp == null) missingPrice++;
+      p.pays += pp ?? 0;
+      pot += pp ?? 0;
     }
-    const unclaimed = drops.filter((d) => !byDrop.has(d.id));
-    const sellValue = unclaimed.reduce((s, d) => s + (value(d) ?? 0), 0);
+    const sold = open ? [] : drops.filter((d) => !byDrop.has(d.id) && d.sold_price != null);
+    const unsold = open ? [] : drops.filter((d) => !byDrop.has(d.id) && d.sold_price == null);
+    const sales = sold.reduce((s, d) => s + d.sold_price, 0);
+    const shareEach = members.length ? Math.floor((pot + sales) / members.length) : 0;
+
+    const rowsSum = [...people.entries()].map(([uid, p]) => ({ uid, ...p, gets: members.some((m) => m.user_id === uid) ? shareEach : 0 }))
+      .map((p) => ({ ...p, saldo: p.gets - p.pays }))
+      .sort((a, b) => a.saldo - b.saldo);
+
     summary = h('div', {},
-      h('h2', {}, 'Verteilung'),
-      h('div', { class: 'cards' },
-        [...people.entries()].sort((a, b) => b[1].value - a[1].value).map(([uid, p]) =>
-          h('div', { class: 'panel' + (uid === me.id ? ' card' : ''), style: uid === me.id ? 'border-color:var(--accent)' : '' },
-            h('div', { class: 'row spread' }, h('strong', {}, p.name), h('span', { class: 'muted small' }, '≈ ' + zeny(p.value))),
-            h('div', { class: 'small muted' }, p.items.join(', ')),
-          )),
-        unclaimed.length ? h('div', { class: 'panel' },
-          h('div', { class: 'row spread' }, h('strong', {}, 'Verkaufen'), h('span', { class: 'muted small' }, '≈ ' + zeny(sellValue))),
-          h('div', { class: 'small muted' }, `${unclaimed.length} Drops ohne Interessenten`),
-        ) : null,
+      h('h2', {}, open ? 'Abrechnung (bisher zugewiesen)' : 'Abrechnung'),
+      h('div', { class: 'cards', style: 'margin-bottom:10px' },
+        h('div', { class: 'panel' }, h('div', { class: 'muted small' }, 'Kasse aus Partypreisen'), h('strong', {}, zeny(pot))),
+        h('div', { class: 'panel' }, h('div', { class: 'muted small' }, `Verkäufe (${sold.length})`), h('strong', {}, zeny(sales))),
+        h('div', { class: 'panel' }, h('div', { class: 'muted small' }, `Anteil pro Mitglied (${members.length})`), h('strong', {}, zeny(shareEach))),
+        unsold.length ? h('div', { class: 'panel' },
+          h('div', { class: 'muted small' }, `Noch zu verkaufen (${unsold.length})`),
+          h('strong', {}, '≈ ' + zeny(unsold.reduce((s, d) => s + (value(d) ?? 0), 0)))) : null,
       ),
+      missingPrice ? h('p', { class: 'small', style: 'color:var(--accent)' },
+        `${missingPrice} Zuteilung(en) ohne Preis – Partypreis zählt als 0. Admin kann den Preis mit ✎ festlegen.`) : null,
+      h('div', { class: 'table-wrap' }, h('table', {},
+        h('thead', {}, h('tr', {},
+          h('th', {}, 'Spieler'), h('th', { class: 'hide-sm' }, 'Items'),
+          h('th', { class: 'num' }, 'Zahlt'), h('th', { class: 'num' }, 'Erhält'), h('th', { class: 'num' }, 'Saldo'))),
+        h('tbody', {}, rowsSum.map((p) => h('tr', {},
+          h('td', {}, p.uid === me.id ? h('strong', {}, p.name) : p.name),
+          h('td', { class: 'small muted hide-sm' }, p.items.join(', ') || '–'),
+          h('td', { class: 'num' }, zeny(p.pays)),
+          h('td', { class: 'num' }, zeny(p.gets)),
+          h('td', { class: 'num', style: `color:var(${p.saldo < 0 ? '--bad' : '--good'})` },
+            (p.saldo > 0 ? '+' : '') + zeny(p.saldo)),
+        ))),
+      )),
+      h('p', { class: 'muted small' },
+        'Negativer Saldo: an die Kasse zahlen. Positiver Saldo: bekommt Zeny aus der Kasse. ' +
+        (unsold.length ? 'Noch nicht verkaufte Drops sind nicht enthalten.' : '')),
     );
   }
 
@@ -476,7 +615,7 @@ async function viewRun(id) {
         h('h1', {}, run.title,
           open ? h('span', { class: 'badge warn' }, 'offen') : h('span', { class: 'badge good' }, 'gewürfelt')),
         h('div', { class: 'muted small' },
-          `${drops.length} Drops · Marktwert ≈ ${zeny(total)}`
+          `${drops.length} Drops · Marktwert ≈ ${zeny(total)} · Partypreis ${pct} %`
           + (run.rolled_at ? ` · gewürfelt ${date(run.rolled_at)}` : '')),
       ),
       h('div', { class: 'row' },
@@ -492,7 +631,9 @@ async function viewRun(id) {
       ),
     ),
     open ? h('p', { class: 'muted small' },
-      'Markiere, was du willst. ★ = automatisch über deine Wunschliste; „☆ Wunschliste" setzt ein Item für alle künftigen Runs darauf. Beim Würfeln wird die Menge gleichmäßig auf alle Interessenten verteilt, den Rest bekommen die höchsten Würfe.') : null,
+      'Markiere, was du willst. ★ = automatisch über deine Wunschliste; „☆ Wunschliste" setzt ein Item für alle künftigen Runs darauf. ' +
+      'Beim Würfeln wird die Menge gleichmäßig auf alle Interessenten verteilt, den Rest bekommen die höchsten Würfe. ' +
+      `Wer ein Item bekommt, zahlt den Partypreis (${pct} %) in die Kasse; Kasse und Verkäufe werden auf alle Mitglieder geteilt.`) : null,
     importBox ? h('div', { style: 'margin:14px 0' }, importBox) : null,
     summary,
     drops.length ? h('div', { class: 'row', style: 'margin:18px 0 10px' }, filter,

@@ -60,7 +60,7 @@ h2 { font-size: 17px; margin: 28px 0 10px; }
 .spread { justify-content: space-between; }
 .stack > * + * { margin-top: 8px; }
 
-input[type=text], input[type=search], textarea {
+input[type=text], input[type=search], input[type=number], select, textarea {
   background: var(--panel-2);
   color: var(--text);
   border: 1px solid var(--border);

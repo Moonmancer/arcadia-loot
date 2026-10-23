@@ -55,8 +55,17 @@ Fertig:
   ein (`interests.source = 'wunschliste'`): bei Import, neuem Wunsch, Party-Beitritt. Wunsch entfernen
   bzw. Party verlassen entfernt die Interessen wieder (nur offene Runs; manuelle Interessen beim
   Entfernen eines Wunsches bleiben). Abgleich nur über Item-ID, Refine/Karten egal.
+- Schema `004_roles_sales.sql`: Rollen `admin` / `verkaeufer` / `teilnehmer` (Funktion heißt weiter
+  `is_party_leader`, bedeutet „Admin"; `is_party_seller` = Admin oder Verkäufer). Mehrere Admins,
+  letzter Admin geschützt (Trigger). `parties.party_price_pct` (Standard 75). `drops.price_override`
+  (Stückpreis, RPC `set_price`, nur Admin), `drops.assigned_to` (RPC `assign_drop`, nur Admin; wird
+  nicht gewürfelt, `interests.source = 'zuweisung'`), `drops.sold_price` (RPC `set_sale`, Admin/Verkäufer,
+  nur gewürfelte Drops ohne Interessenten).
+- **Abrechnung (wie früher im Google Doc):** Empfänger zahlt Partypreis = Stückpreis × Anteil × pct % in
+  die Kasse; Kasse + Verkaufserlöse ÷ alle Party-Mitglieder; Saldo = erhält − zahlt. Berechnung im
+  Frontend. Stückpreis = Override, sonst Marktpreis (Median, sonst Min) nur bei normalen Items.
 - Migrationen lokal mit PGlite getestet (Auth-Stubs).
-- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–003 eingespielt,
+- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–004 eingespielt,
   `sync-arcadia` deployt, Secrets + Vault gesetzt, Items/Icons/Preise geladen, Cron-Jobs aktiv.
   GitHub-Repo `Moonmancer/arcadia-loot` (öffentlich); Pages aktiv (Source: GitHub Actions).
 
