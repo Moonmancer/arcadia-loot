@@ -59,6 +59,15 @@ h2 { font-size: 17px; margin: 28px 0 10px; }
 }
 
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.sticky-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+  margin: -14px -14px 0;
+  padding: 10px 14px;
+  border-radius: var(--radius) var(--radius) 0 0;
+}
 .spread { justify-content: space-between; }
 .stack > * + * { margin-top: 8px; }
 

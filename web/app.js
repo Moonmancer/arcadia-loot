@@ -1357,7 +1357,8 @@ async function viewRun(id) {
       }),
     }, `Auf Müll-Liste setzen (${picked.size})`);
     suggestBox = h('div', { class: 'panel', style: 'margin:14px 0;border-color:var(--accent)' },
-      h('strong', {}, 'Vorschlag für die Müll-Liste'),
+      // Kopfzeile mit Knopf bleibt beim Scrollen stehen, solange der Block sichtbar ist
+      h('div', { class: 'row spread sticky-head' }, h('strong', {}, 'Vorschlag für die Müll-Liste'), addBtn),
       h('p', { class: 'muted small', style: 'margin:4px 0 8px' },
         'Diese Items wurden in den letzten 10 Runs der Party jedes Mal an NPC verkauft (mindestens in 2 Runs).'),
       h('ul', { class: 'list' }, suggestions.map((sug) => {
@@ -1373,7 +1374,6 @@ async function viewRun(id) {
           h('span', { class: 'muted small', style: 'margin-left:auto' },
             `${sug.runs} Runs · ${sug.occurrences}× an NPC · NPC ${zeny(npcSell(sug.npc_price))}`));
       })),
-      h('div', { class: 'row', style: 'margin-top:8px' }, addBtn),
     );
   }
 
