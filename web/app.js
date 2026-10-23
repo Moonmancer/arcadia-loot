@@ -37,6 +37,9 @@ function icon(src) {
 // Stückpreis für die Wertschätzung: Median der Angebote, sonst günstigstes Angebot
 const unitPrice = (p) => (p ? p.sell_median ?? p.sell_min ?? null : null);
 
+// Verkauf an NPC: halber NPC-Preis, mit Overcharge (Stufe 10) +24 % – Verkäufer hat den Skill
+const npcSell = (npcPrice) => (npcPrice > 0 ? Math.floor(Math.floor(npcPrice / 2) * 124 / 100) : null);
+
 let toastTimer;
 function toast(msg, isError = false) {
   const t = document.getElementById('toast');
@@ -399,7 +402,8 @@ async function viewRun(id) {
   }
 
   // Stückpreis: Override des Admins, sonst Marktpreis (nur für normale Items aussagekräftig)
-  const unit = (d) => d.price_override ?? (d.is_plain ? unitPrice(d) : null);
+  // Stückpreis: Override des Admins, sonst Marktpreis (nur normale Items), sonst NPC-Verkaufspreis
+  const unit = (d) => d.price_override ?? (d.is_plain ? unitPrice(d) : null) ?? npcSell(d.npc_price);
   const value = (d, amount = d.amount) => (unit(d) != null ? unit(d) * amount : null);
   const partyPrice = (d, amount = d.amount) => (unit(d) != null ? Math.round(unit(d) * amount * pct / 100) : null);
   const total = drops.reduce((s, d) => s + (value(d) ?? 0), 0);
@@ -642,7 +646,11 @@ async function viewRun(id) {
     const priceCell = h('td', { class: 'num hide-sm' },
       d.price_override != null
         ? h('span', { title: 'Vom Admin festgelegt' }, zeny(d.price_override), h('span', { class: 'badge warn' }, 'fest'))
-        : d.is_plain ? zeny(unitPrice(d)) : h('span', { class: 'muted', title: 'Marktpreis gilt nur für normale Items' }, zeny(unitPrice(d))),
+        : d.is_plain && unitPrice(d) != null ? zeny(unitPrice(d))
+        : npcSell(d.npc_price) != null
+          ? h('span', { title: d.is_plain ? 'Kein Marktpreis – NPC-Verkaufspreis als Ersatz' : 'Marktpreis gilt nur für normale Items – NPC-Verkaufspreis als Ersatz' },
+              zeny(npcSell(d.npc_price)), h('span', { class: 'badge' }, 'NPC'))
+          : '–',
       isAdmin && ['offen', 'abholung', 'verkauf'].includes(status)
         ? h('button', { class: 'link small', title: 'Preis überschreiben', onclick: editPrice(d) }, '✎') : null);
 
@@ -694,6 +702,7 @@ async function viewRun(id) {
       ),
       h('td', { class: 'num' }, zenyFmt.format(d.amount)),
       priceCell,
+      h('td', { class: 'num hide-sm muted' }, zeny(npcSell(d.npc_price))),
       h('td', { class: 'num hide-sm' }, zeny(value(d))),
       h('td', { class: 'num' }, isRest ? h('span', { class: 'muted', title: 'Rest ist gratis' }, 'gratis') : zeny(partyPrice(d))),
       h('td', {}, chips),
@@ -728,7 +737,9 @@ async function viewRun(id) {
     ? h('div', { class: 'table-wrap' }, h('table', {},
         h('thead', {}, h('tr', {},
           h('th', { class: 'hide-sm' }), h('th', {}, 'Item'), h('th', { class: 'num' }, 'Menge'),
-          h('th', { class: 'num hide-sm' }, 'Stückpreis'), h('th', { class: 'num hide-sm' }, 'Gesamt'),
+          h('th', { class: 'num hide-sm' }, 'Stückpreis'),
+          h('th', { class: 'num hide-sm', title: 'Verkauf an NPC pro Stück (½ NPC-Preis + 24 % Overcharge)' }, 'NPC'),
+          h('th', { class: 'num hide-sm' }, 'Gesamt'),
           h('th', { class: 'num', title: `${pct} % vom Gesamtpreis` }, `Partypreis ${pct} %`),
           h('th', {}, open ? 'Interessenten' : 'Ergebnis'), h('th', {}),
         )),
@@ -859,7 +870,7 @@ async function viewRun(id) {
 // ---------- Wunschliste ----------
 
 async function viewWishlist() {
-  const list = await q(sb.from('wishlist').select('item_id, created_at, items(name, icon, slots)')
+  const list = await q(sb.from('wishlist').select('item_id, created_at, items(name, icon, slots, npc_price)')
     .order('created_at', { ascending: false }));
   const prices = list.length
     ? await q(sb.from('item_prices').select('item_id, sell_min, sell_median, buy_max').in('item_id', list.map((w) => w.item_id)))
@@ -906,7 +917,8 @@ async function viewWishlist() {
       ? h('div', { class: 'table-wrap' }, h('table', {},
           h('thead', {}, h('tr', {},
             h('th', {}), h('th', {}, 'Item'), h('th', { class: 'num' }, 'Verkauf ab'),
-            h('th', { class: 'num' }, 'Median'), h('th', { class: 'num' }, 'Ankauf bis'), h('th', {}),
+            h('th', { class: 'num' }, 'Median'), h('th', { class: 'num' }, 'Ankauf bis'),
+            h('th', { class: 'num', title: '½ NPC-Preis + 24 % Overcharge' }, 'NPC'), h('th', {}),
           )),
           h('tbody', {}, list.map((w) => {
             const p = priceBy.get(w.item_id);
@@ -916,6 +928,7 @@ async function viewWishlist() {
               h('td', { class: 'num' }, zeny(p?.sell_min)),
               h('td', { class: 'num' }, zeny(p?.sell_median)),
               h('td', { class: 'num' }, zeny(p?.buy_max)),
+              h('td', { class: 'num' }, zeny(npcSell(w.items?.npc_price))),
               h('td', {}, h('button', {
                 class: 'small danger',
                 onclick: action(async () => {

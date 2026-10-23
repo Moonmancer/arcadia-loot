@@ -73,8 +73,12 @@ Fertig:
   gratis (`source = 'rest'`, kein Partypreis); `undo_rest` solange nicht abgeholt.
 - **PostgREST:** `interests` und `run_participants` haben je zwei FKs auf `profiles` → Embedding mit
   Hinweis, z. B. `profiles!interests_user_id_fkey(display_name)`.
+- NPC-Preis: `items.npc_price` = NPC-Einkaufspreis (API `/items/list`). Verkauf an NPC im Frontend =
+  floor(floor(npc_price / 2) × 1,24) (Verkäufer hat Overcharge 10). Spalte „NPC“ in Loot-Liste und
+  Wunschliste; Ersatz-Stückpreis, wenn kein Override und kein Marktpreis (bzw. Item mit Attr./Karten).
+  `drop_overview` hat dafür `npc_price` (008).
 - Migrationen lokal mit PGlite getestet (Auth-Stubs).
-- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–007 eingespielt,
+- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–008 eingespielt,
   `sync-arcadia` deployt, Secrets + Vault gesetzt, Items/Icons/Preise geladen, Cron-Jobs aktiv.
   GitHub-Repo `Moonmancer/arcadia-loot` (öffentlich); Pages aktiv (Source: GitHub Actions).
 
