@@ -97,6 +97,9 @@ Fertig:
   NPC-Preis) und gibt die Anzahl zurück; `muell→offen` macht das rückgängig. Verkaufte Drops nehmen keine
   Interessen an. Müll-Liste auch in der Party-Ansicht pflegbar.
 - An NPC verkaufte Drops (`sold_to_npc`) lassen sich nicht mehr zuweisen (015); Spieler-Verkäufe schon.
+- Müll ohne NPC-Preis (z. B. Stone 7049, `npc_price = 0`) wird beim Wechsel offen → muell entsorgt:
+  `sold_to_npc = true`, `sold_price = 0` (018); im Frontend „Müll → entsorgen“ / „entsorgt“, kein Konflikt.
+- Müll-Knopf im Run speichert im Hintergrund (sofort sichtbar, pro Item nacheinander, bei Fehler zurück).
 - Run-Ansicht ist breiter (`main.wide`, 1700 px).
 - Keine Browser-Dialoge: `dialog()` / `confirmBox()` / `textBox()` in `app.js`. Phasenwechsel zeigen offene
   Punkte und bieten Behebungen an (Abholungen abhaken, übrige Drops: Vorauswahl / alle an NPC / alle als Rest,
@@ -117,7 +120,7 @@ Fertig:
   eigener Saldo in Runs der Phase auszahlung, solange nicht als ausgezahlt markiert. Abrechnung steckt in
   `settle()` in `app.js` und wird von Run-Ansicht und Startseite gemeinsam genutzt.
 - Migrationen lokal mit PGlite getestet (Auth-Stubs).
-- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–017 eingespielt,
+- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–018 eingespielt,
   `sync-arcadia` deployt, Secrets + Vault gesetzt, Items/Icons/Preise geladen, Cron-Jobs aktiv.
   GitHub-Repo `Moonmancer/arcadia-loot` (öffentlich); Pages aktiv (Source: GitHub Actions).
 

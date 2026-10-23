@@ -749,8 +749,9 @@ async function viewRun(id) {
   const total = drops.reduce((s, d) => s + (value(d) ?? 0), 0);
   const leftovers = drops.filter((d) => !byDrop.has(d.id));          // ohne Empfänger
   const unsold = leftovers.filter((d) => d.sold_price == null);
+  // Müll ohne NPC-Preis ist kein Konflikt: er wird beim Weiter-Klick mit 0 z entsorgt
   const trashBlock = (d) => (conflictBy.has(d.id) ? 'wunschliste' : d.assigned_to != null ? 'zuweisung'
-    : byDrop.has(d.id) ? 'interesse' : npcSell(d.npc_price) == null ? 'npc' : null);
+    : byDrop.has(d.id) ? 'interesse' : null);
   // als Funktion, weil die Müll-Markierung ohne Neuladen geändert wird
   const trashToSell = () => (trashPhase ? drops.filter((d) => trash.has(d.item_id) && d.sold_price == null && !trashBlock(d)) : []);
 
@@ -811,8 +812,9 @@ async function viewRun(id) {
             ? `${sell.length} Müll-Drop(s) werden für ${zeny(npcSum(sell))} an NPC verkauft.`
             : 'Es ist kein Müll zu verkaufen.',
           items: [
-            ...sell.map((d) => `${zenyFmt.format(d.amount)}× ${d.name} → ${zeny(d.amount * npcSell(d.npc_price))}`),
-            ...(blocked.length ? [`${blocked.length} Müll-Drop(s) bleiben wegen Konflikt (Wunschliste, Interesse, Zuweisung oder kein NPC-Preis)`] : []),
+            ...sell.map((d) => `${zenyFmt.format(d.amount)}× ${d.name} → ` +
+              (npcSell(d.npc_price) != null ? zeny(d.amount * npcSell(d.npc_price)) : 'entsorgt (kein NPC-Preis)')),
+            ...(blocked.length ? [`${blocked.length} Müll-Drop(s) bleiben wegen Konflikt (Wunschliste, Interesse oder Zuweisung)`] : []),
           ],
           buttons: [{ label: sell.length ? 'Müll verkaufen & weiter' : 'Weiter', value: 'go', primary: true }],
         });
@@ -1178,12 +1180,15 @@ async function viewRun(id) {
   const trashBadge = (d) => {
     if (!trashPhase || !trash.has(d.item_id)) return null;
     const block = d.sold_price == null ? trashBlock(d) : null;
-    if (!block) return h('span', { class: 'badge', title: 'Wird beim Weiter-Klick an NPC verkauft' }, 'Müll → NPC');
+    if (!block) {
+      return npcSell(d.npc_price) != null
+        ? h('span', { class: 'badge', title: 'Wird beim Weiter-Klick an NPC verkauft' }, 'Müll → NPC')
+        : h('span', { class: 'badge', title: 'Kein NPC-Preis – wird beim Weiter-Klick ohne Erlös entsorgt' }, 'Müll → entsorgen');
+    }
     const text = {
       wunschliste: `⚠ Wunschliste: ${(conflictBy.get(d.id) || []).join(', ')}`,
       interesse: '⚠ Interesse eingetragen',
       zuweisung: '⚠ zugewiesen',
-      npc: '⚠ kein NPC-Preis',
     }[block];
     return h('span', { class: 'badge warn', title: 'Müll – wird nicht verkauft' }, `Müll · ${text}`);
   };
@@ -1254,7 +1259,8 @@ async function viewRun(id) {
     if (isRest) chips.prepend(h('span', { class: 'badge', style: 'margin:0 4px 0 0' }, 'Rest'));
     if (!list.length) {
       chips.append(d.sold_price != null
-        ? h('span', { class: 'chip win' }, `${d.sold_to_npc ? 'an NPC verkauft' : 'verkauft'} ${zeny(d.sold_price)}`)
+        ? h('span', { class: 'chip win' }, d.sold_to_npc && d.sold_price === 0 ? 'entsorgt'
+          : `${d.sold_to_npc ? 'an NPC verkauft' : 'verkauft'} ${zeny(d.sold_price)}`)
         : open ? h('span', { class: 'muted small' }, '–') : h('span', { class: 'muted small' }, 'übrig'));
     }
 
@@ -1496,8 +1502,8 @@ async function viewRun(id) {
 
   const hints = {
     offen: 'Teilnehmer festlegen, Loot einfügen, Interesse anmelden. ★ = automatisch über deine Wunschliste. ' +
-      'Admins markieren Müll (Müll-Liste der Party). Mit „Weiter: Müll verkaufen“ geht aller Müll an NPC – außer er ' +
-      'steht auf der Wunschliste eines Teilnehmers, jemand hat Interesse eingetragen oder er ist zugewiesen.',
+      'Admins markieren Müll (Müll-Liste der Party). Mit „Weiter: Müll verkaufen“ geht aller Müll an NPC (ohne NPC-Preis: ' +
+      'entsorgt) – außer er steht auf der Wunschliste eines Teilnehmers, jemand hat Interesse eingetragen oder er ist zugewiesen.',
     muell: 'Müll ist an NPC verkauft. Interessen können noch geändert werden, dann wird ausgewürfelt: ' +
       'Die Menge wird gleichmäßig auf alle Interessenten verteilt, den Rest bekommen die höchsten Würfe. ' +
       `Empfänger zahlen den Partypreis (${pct} %) in die Kasse.`,
