@@ -765,6 +765,7 @@ async function viewRun(id) {
       const cls = ['chip', i.user_id === me.id && 'me', settled && (i.share > 0 ? 'win' : 'lose')].filter(Boolean).join(' ');
       let label = i.profiles.display_name;
       if (i.source === 'zuweisung') label += ` → ${i.share}× (zugewiesen)`;
+      else if (i.source === 'nachmeldung') label += ` → ${i.share}× (nachgemeldet)`;
       else if (i.source === 'rest') label += ` ${i.share}×`;
       else if (!open) label += ` ${i.roll}` + (d.amount > 1 ? ` → ${i.share}×` : '');
       else if (i.source === 'wunschliste') label += ' ★';
@@ -794,6 +795,29 @@ async function viewRun(id) {
     const actions = [];
     if (open && !assigned && amParticipant) {
       actions.push(h('button', { class: 'small' + (mine ? ' on' : ''), onclick: toggleInterest(d, mine) }, mine ? 'Will ich ✓' : 'Will ich'));
+    }
+    // Nachmelden während der Abholung: wer zuerst kommt, übernimmt den Drop zum Partypreis
+    if (status === 'abholung' && myRole && !list.length && d.sold_price == null && !assigned) {
+      actions.push(h('button', {
+        class: 'small',
+        title: 'Übrigen Drop übernehmen – wer zuerst kommt',
+        onclick: action(async () => {
+          const pp = partyPrice(d);
+          if (!confirm(`${d.name} (${zenyFmt.format(d.amount)}×) übernehmen?` + (pp != null ? ` Partypreis: ${zeny(pp)}.` : ''))) return;
+          await q(sb.rpc('claim_drop', { p_drop: d.id }));
+          toast(`${d.name} übernommen`);
+          rerender();
+        }),
+      }, 'Nehme ich'));
+    }
+    if (status === 'abholung' && list.some((i) => i.user_id === me.id && i.source === 'nachmeldung' && !i.picked_up_at)) {
+      actions.push(h('button', {
+        class: 'small',
+        onclick: action(async () => {
+          await q(sb.rpc('unclaim_drop', { p_drop: d.id }));
+          rerender();
+        }),
+      }, 'Zurückgeben'));
     }
     if (['abholung', 'verkauf'].includes(status) && !list.length && isSeller) actions.push(saleControl(d));
     if (status === 'verkauf' && !list.length && isSeller && !d.sold_to_npc && npcSell(d.npc_price) != null) {
@@ -963,7 +987,9 @@ async function viewRun(id) {
     offen: 'Teilnehmer festlegen, Loot einfügen, Interesse anmelden. ★ = automatisch über deine Wunschliste. ' +
       'Beim Würfeln wird die Menge gleichmäßig auf alle Interessenten verteilt, den Rest bekommen die höchsten Würfe. ' +
       `Empfänger zahlen den Partypreis (${pct} %) in die Kasse.`,
-    abholung: 'Jeder holt seinen Anteil im Guild Storage ab und hakt ihn ab (Admin und Verkäufer können für alle abhaken).',
+    abholung: 'Jeder holt seinen Anteil im Guild Storage ab und hakt ihn ab (Admin und Verkäufer können für alle abhaken). ' +
+      'Übrige Drops kann jedes Party-Mitglied mit „Nehme ich“ übernehmen – wer zuerst kommt, zahlt den Partypreis. ' +
+      'Mit „Verkauf & Rest“ ist Schluss.',
     verkauf: 'Übrige Drops verkaufen (Erlös eintragen) oder nützlichen Rest gratis und zufällig an die Teilnehmer verteilen – jeder Eintrag geht komplett an eine Person.',
     auszahlung: 'Kasse und Verkäufe werden ausgezahlt. Admin oder Verkäufer haken pro Teilnehmer „Ausgezahlt“ ab.',
     beendet: `Run beendet${run.finished_at ? ' am ' + date(run.finished_at) : ''}.`,
