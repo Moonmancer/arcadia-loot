@@ -73,6 +73,79 @@ function debounce(fn, ms) {
   return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
 }
 
+// ---------- Dialoge (statt confirm/prompt) ----------
+
+// Eigener Dialog: Titel, Text, Liste offener Punkte, Felder (radio/check/text) und Knöpfe.
+// Liefert { button, values } oder null bei Abbrechen/Escape/Klick daneben.
+//   fields: [{ type: 'radio', name, value, options: [{ value, label, hint }] },
+//            { type: 'check', name, label, value }, { type: 'text', name, value, placeholder }]
+//   buttons: [{ label, value, primary, danger }]
+function dialog({ title, text, items = [], fields = [], buttons }) {
+  return new Promise((resolve) => {
+    const values = Object.fromEntries(fields.map((f) => [f.name, f.value]));
+    let firstInput = null;
+    const fieldEls = fields.map((f) => {
+      if (f.type === 'radio') {
+        return h('div', { class: 'stack dialog-field' }, f.options.map((o) => {
+          const r = h('input', { type: 'radio', name: f.name, value: o.value });
+          r.checked = o.value === f.value;
+          r.addEventListener('change', () => { values[f.name] = o.value; });
+          return h('label', { class: 'dialog-option' }, r,
+            h('span', {}, o.label, o.hint ? h('span', { class: 'muted small' }, ' – ' + o.hint) : null));
+        }));
+      }
+      if (f.type === 'check') {
+        const c = h('input', { type: 'checkbox' });
+        c.checked = !!f.value;
+        c.addEventListener('change', () => { values[f.name] = c.checked; });
+        return h('label', { class: 'dialog-option dialog-field' }, c, h('span', {}, f.label));
+      }
+      const inp = h('input', { type: 'text', value: f.value ?? '', placeholder: f.placeholder ?? '' });
+      inp.addEventListener('input', () => { values[f.name] = inp.value; });
+      inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') close(buttons.find((b) => b.primary)?.value ?? buttons[0].value);
+      });
+      firstInput ??= inp;
+      return h('div', { class: 'dialog-field row' }, inp);
+    });
+
+    const backdrop = h('div', { class: 'modal-backdrop' });
+    const close = (button) => {
+      backdrop.remove();
+      document.removeEventListener('keydown', onKey);
+      resolve(button == null ? null : { button, values });
+    };
+    const onKey = (e) => { if (e.key === 'Escape') close(null); };
+    const btnEls = buttons.map((b) => h('button', {
+      class: [b.primary && 'primary', b.danger && 'danger'].filter(Boolean).join(' '),
+      onclick: () => close(b.value),
+    }, b.label));
+    const modal = h('div', { class: 'modal panel', role: 'dialog', 'aria-modal': 'true' },
+      h('h3', {}, title),
+      text ? h('p', { class: 'muted' }, text) : null,
+      items.length ? h('ul', { class: 'dialog-issues' }, items.map((i) => h('li', {}, i))) : null,
+      fieldEls,
+      h('div', { class: 'row dialog-buttons' },
+        h('button', { onclick: () => close(null) }, 'Abbrechen'), btnEls),
+    );
+    backdrop.append(modal);
+    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(null); });
+    document.addEventListener('keydown', onKey);
+    document.body.append(backdrop);
+    (firstInput ?? btnEls.find((b) => b.classList.contains('primary')) ?? btnEls[0])?.focus();
+  });
+}
+
+async function confirmBox(title, text, ok = 'OK', danger = false) {
+  return !!(await dialog({ title, text, buttons: [{ label: ok, value: 'ok', primary: !danger, danger }] }));
+}
+
+async function textBox(title, text, value = '', ok = 'Speichern', placeholder = '') {
+  const r = await dialog({ title, text, fields: [{ type: 'text', name: 'v', value: String(value ?? ''), placeholder }],
+    buttons: [{ label: ok, value: 'ok', primary: true }] });
+  return r ? r.values.v : null;
+}
+
 // ---------- Kopfzeile / Login ----------
 
 function renderUser() {
@@ -348,7 +421,7 @@ async function viewParty(id) {
         ? h('button', {
             class: 'small danger',
             onclick: action(async () => {
-              if (!confirm(`Party „${party.name}" wirklich verlassen?`)) return;
+              if (!await confirmBox('Party verlassen', `Party „${party.name}“ wirklich verlassen?`, 'Verlassen', true)) return;
               await q(sb.from('party_members').delete().eq('party_id', id).eq('user_id', me.id));
               location.hash = '#/';
             }),
@@ -357,7 +430,7 @@ async function viewParty(id) {
           ? h('button', {
               class: 'small danger',
               onclick: action(async () => {
-                if (!confirm(`${m.profiles.display_name} aus der Party entfernen?`)) return;
+                if (!await confirmBox('Mitglied entfernen', `${m.profiles.display_name} aus der Party entfernen?`, 'Entfernen', true)) return;
                 await q(sb.from('party_members').delete().eq('party_id', id).eq('user_id', m.user_id));
                 rerender();
               }),
@@ -418,7 +491,7 @@ async function viewParty(id) {
   const rename = isAdmin && h('button', {
     class: 'link small',
     onclick: action(async () => {
-      const n = prompt('Neuer Name der Party', party.name);
+      const n = await textBox('Party umbenennen', null, party.name);
       if (!n || !n.trim()) return;
       await q(sb.from('parties').update({ name: n.trim() }).eq('id', id));
       rerender();
@@ -428,7 +501,7 @@ async function viewParty(id) {
   const del = isAdmin && h('button', {
     class: 'small danger',
     onclick: action(async () => {
-      if (!confirm(`Party „${party.name}" mit allen Runs endgültig löschen?`)) return;
+      if (!await confirmBox('Party löschen', `Party „${party.name}“ mit allen Runs endgültig löschen? Das lässt sich nicht rückgängig machen.`, 'Endgültig löschen', true)) return;
       await q(sb.from('parties').delete().eq('id', id));
       location.hash = '#/';
     }),
@@ -598,11 +671,24 @@ async function viewRun(id) {
     : byDrop.has(d.id) ? 'interesse' : npcSell(d.npc_price) == null ? 'npc' : null);
   const trashToSell = trashPhase ? drops.filter((d) => trash.has(d.item_id) && d.sold_price == null && !trashBlock(d)) : [];
 
-  const changeStatus = (to, question) => action(async () => {
-    if (question && !confirm(question)) return;
-    await q(sb.rpc('set_run_status', { p_run: id, p_status: to }));
+  const goTo = async (to) => {
+    const n = await q(sb.rpc('set_run_status', { p_run: id, p_status: to }));
     rerender();
-  });
+    return n;
+  };
+  const changeStatus = (to) => action(() => goTo(to));
+
+  // Behebungen, die die Phasen-Dialoge anbieten
+  const markPicked = async (list) => {
+    for (const i of list) await q(sb.rpc('set_picked_up', { p_drop: i.drop_id, p_user: i.user_id, p_done: true }));
+  };
+  const sellNpc = async (list) => {
+    for (const d of list) await q(sb.rpc('sell_to_npc', { p_drop: d.id }));
+  };
+  const splitRest = async (list) => {
+    if (list.length) await q(sb.rpc('split_rest', { p_run: id, p_drops: list.map((d) => d.id) }));
+  };
+  const npcSum = (list) => list.reduce((s, d) => s + d.amount * npcSell(d.npc_price), 0);
 
   // ----- Kopf mit Phasen-Aktionen -----
   const phaseButtons = [];
@@ -610,27 +696,43 @@ async function viewRun(id) {
     phaseButtons.push(h('button', {
       class: 'primary',
       onclick: action(async () => {
-        const sum = trashToSell.reduce((s, d) => s + d.amount * npcSell(d.npc_price), 0);
-        if (!confirm(trashToSell.length
-          ? `${trashToSell.length} Müll-Drop(s) für ${zeny(sum)} an NPC verkaufen und weiter?`
-          : 'Kein Müll zu verkaufen. Trotzdem weiter?')) return;
-        const n = await q(sb.rpc('set_run_status', { p_run: id, p_status: 'muell' }));
+        const blocked = drops.filter((d) => trash.has(d.item_id) && d.sold_price == null && trashBlock(d));
+        const r = await dialog({
+          title: 'Weiter: Müll verkaufen',
+          text: trashToSell.length
+            ? `${trashToSell.length} Müll-Drop(s) werden für ${zeny(npcSum(trashToSell))} an NPC verkauft.`
+            : 'Es ist kein Müll zu verkaufen.',
+          items: [
+            ...trashToSell.map((d) => `${zenyFmt.format(d.amount)}× ${d.name} → ${zeny(d.amount * npcSell(d.npc_price))}`),
+            ...(blocked.length ? [`${blocked.length} Müll-Drop(s) bleiben wegen Konflikt (Wunschliste, Interesse, Zuweisung oder kein NPC-Preis)`] : []),
+          ],
+          buttons: [{ label: trashToSell.length ? 'Müll verkaufen & weiter' : 'Weiter', value: 'go', primary: true }],
+        });
+        if (!r) return;
+        const n = await goTo('muell');
         toast(n ? `${n} Müll-Drop(s) an NPC verkauft` : 'Weiter – kein Müll verkauft');
-        rerender();
       }),
     }, 'Weiter: Müll verkaufen →'));
   }
   if (status === 'muell' && canAdvance) {
     phaseButtons.push(h('button', {
       class: 'small',
-      onclick: changeStatus('offen', 'Zurück zu „Loot & Interessen“? Die Müll-Verkäufe werden rückgängig gemacht.'),
+      onclick: action(async () => {
+        if (await confirmBox('Zurück zu „Loot & Interessen“',
+          'Die Müll-Verkäufe dieses Runs werden rückgängig gemacht.', 'Zurück')) await goTo('offen');
+      }),
     }, `← ${PHASE_LABEL.offen}`));
   }
   if (status === 'muell' && canManage) {
     phaseButtons.push(h('button', {
       class: 'primary',
       onclick: action(async () => {
-        if (!confirm('Jetzt würfeln? Danach können keine Interessen mehr geändert werden.')) return;
+        const withInterest = drops.filter((d) => (byDrop.get(d.id) || []).length).length;
+        const free = drops.filter((d) => !byDrop.has(d.id) && d.sold_price == null).length;
+        if (!await confirmBox('Auswürfeln',
+          `${withInterest} Drop(s) mit Interessenten werden ausgewürfelt. ${free ? `${free} Drop(s) ohne Interessenten bleiben übrig ` +
+          '(während der Abholung kann man sie nachmelden, danach verkaufen oder als Rest verteilen). ' : ''}` +
+          'Danach können keine Interessen mehr geändert werden.', 'Auswürfeln')) return;
         await q(sb.rpc('roll_run', { p_run: id }));
         toast('Gewürfelt – Abholung beginnt');
         rerender();
@@ -641,27 +743,104 @@ async function viewRun(id) {
     const i = PHASES.indexOf(status);
     if (i > 2) phaseButtons.push(h('button', { class: 'small', onclick: changeStatus(PHASES[i - 1]) }, `← ${PHASE_LABEL[PHASES[i - 1]]}`));
     // Rest wird erst mit der Auszahlung ausgehändigt und zählt vorher nicht als offene Abholung
-    const openPickups = handouts.filter((x) => !x.picked_up_at && x.source !== 'rest').length;
-    const openRest = handouts.filter((x) => !x.picked_up_at && x.source === 'rest').length;
+    const openPickups = handouts.filter((x) => !x.picked_up_at && x.source !== 'rest');
+    const openAll = handouts.filter((x) => !x.picked_up_at);
+    const pickupField = (list) => (isSeller && list.length
+      ? [{ type: 'check', name: 'pick', value: true, label: `${list.length} Anteil(e) jetzt als abgeholt markieren` }] : []);
+
     if (status === 'abholung') {
       phaseButtons.push(h('button', {
         class: 'primary',
-        onclick: changeStatus('verkauf', openPickups ? `${openPickups} Anteil(e) noch nicht abgeholt. Trotzdem weiter zu Verkauf & Rest?` : null),
+        onclick: action(async () => {
+          if (openPickups.length) {
+            const r = await dialog({
+              title: 'Weiter: Verkauf & Rest',
+              text: 'Noch nicht alles ist abgeholt.',
+              items: [`${openPickups.length} Anteil(e) nicht abgeholt`],
+              fields: pickupField(openPickups),
+              buttons: [{ label: isSeller ? 'Ausführen & weiter' : 'Trotzdem weiter', value: 'go', primary: true }],
+            });
+            if (!r) return;
+            if (r.values.pick) await markPicked(openPickups);
+          }
+          await goTo('verkauf');
+        }),
       }, 'Weiter: Verkauf & Rest →'));
     } else if (status === 'verkauf') {
-      const warn = [unsold.length && `${unsold.length} Drop(s) weder verkauft noch aufgeteilt`,
-        openPickups && `${openPickups} Anteil(e) nicht abgeholt`].filter(Boolean).join(', ');
       phaseButtons.push(h('button', {
         class: 'primary',
-        onclick: changeStatus('auszahlung', warn ? `${warn}. Trotzdem weiter zur Auszahlung?` : null),
+        onclick: action(async () => {
+          if (unsold.length || openPickups.length) {
+            // Vorauswahl aus der Tabelle: markierte Rest-Drops verteilen, übrige mit NPC-Preis an NPC
+            const presetRest = unsold.filter((d) => restPick.has(d.id));
+            const presetNpc = npcCandidates();
+            const npcAble = unsold.filter((d) => npcSell(d.npc_price) != null);
+            const noNpc = unsold.length - npcAble.length;
+            const fields = [];
+            if (unsold.length && isSeller) {
+              const options = [];
+              if (presetRest.length) {
+                options.push({ value: 'preset', label: `Vorauswahl übernehmen: ${presetRest.length} als Rest verteilen, ${presetNpc.length} an NPC`,
+                  hint: presetNpc.length ? `≈ ${zeny(npcSum(presetNpc))}` : '' });
+              }
+              if (npcAble.length) {
+                options.push({ value: 'npc', label: `Alle übrigen an NPC verkaufen (${npcAble.length})`,
+                  hint: `≈ ${zeny(npcSum(npcAble))}${noNpc ? `, ${noNpc} ohne NPC-Preis bleiben übrig` : ''}` });
+              }
+              options.push({ value: 'rest', label: `Alle übrigen als Rest zufällig verteilen (${unsold.length})`, hint: 'gratis, mit der Auszahlung ausgehändigt' });
+              options.push({ value: 'none', label: 'Nichts tun', hint: 'übrige Drops sind nicht in der Abrechnung' });
+              fields.push({ type: 'radio', name: 'leftover', value: options[0].value, options });
+            }
+            fields.push(...pickupField(openPickups));
+            const r = await dialog({
+              title: 'Weiter: Auszahlung',
+              text: 'Es sind noch Entscheidungen offen.',
+              items: [
+                ...(unsold.length ? [`${unsold.length} Drop(s) weder verkauft noch als Rest verteilt`] : []),
+                ...(openPickups.length ? [`${openPickups.length} Anteil(e) nicht abgeholt`] : []),
+              ],
+              fields,
+              buttons: [{ label: isSeller ? 'Ausführen & weiter' : 'Trotzdem weiter', value: 'go', primary: true }],
+            });
+            if (!r) return;
+            const choice = r.values.leftover;
+            if (choice === 'preset') { await splitRest(presetRest); await sellNpc(presetNpc); }
+            if (choice === 'npc') await sellNpc(npcAble);
+            if (choice === 'rest') await splitRest(unsold);
+            if (r.values.pick) await markPicked(openPickups);
+          }
+          await goTo('auszahlung');
+        }),
       }, 'Weiter: Auszahlung →'));
     } else if (status === 'auszahlung') {
-      const unpaid = participants.filter((p) => !p.paid_at).length;
-      const warn = [unpaid && `${unpaid} Teilnehmer noch nicht ausgezahlt`,
-        (openPickups + openRest) && `${openPickups + openRest} Anteil(e) nicht ausgehändigt`].filter(Boolean).join(', ');
       phaseButtons.push(h('button', {
         class: 'primary',
-        onclick: changeStatus('beendet', warn ? `${warn}. Run trotzdem beenden?` : 'Run beenden?'),
+        onclick: action(async () => {
+          const unpaid = participants.filter((p) => !p.paid_at);
+          const fields = [];
+          if (isSeller && unpaid.length) {
+            fields.push({ type: 'check', name: 'paid', value: true, label: `${unpaid.length} Teilnehmer jetzt als ausgezahlt markieren` });
+          }
+          if (isSeller && openAll.length) {
+            fields.push({ type: 'check', name: 'pick', value: true, label: `${openAll.length} Anteil(e) jetzt als ausgehändigt markieren` });
+          }
+          const r = await dialog({
+            title: 'Run beenden',
+            text: unpaid.length || openAll.length ? 'Es ist noch etwas offen.' : 'Danach ist der Run nur noch lesbar.',
+            items: [
+              ...(unpaid.length ? [`Nicht ausgezahlt: ${unpaid.map((p) => p.profiles.display_name).join(', ')}`] : []),
+              ...(openAll.length ? [`${openAll.length} Anteil(e) nicht ausgehändigt`] : []),
+            ],
+            fields,
+            buttons: [{ label: fields.length ? 'Ausführen & beenden' : 'Run beenden', value: 'go', primary: true }],
+          });
+          if (!r) return;
+          if (r.values.paid) {
+            for (const p of unpaid) await q(sb.rpc('set_paid', { p_run: id, p_user: p.user_id, p_done: true }));
+          }
+          if (r.values.pick) await markPicked(openAll);
+          await goTo('beendet');
+        }),
       }, 'Run beenden'));
     }
   }
@@ -789,7 +968,8 @@ async function viewRun(id) {
   });
 
   const editPrice = (d) => action(async () => {
-    const input = prompt(`Stückpreis für ${d.name} (leer = Marktpreis)`, d.price_override ?? unitPrice(d) ?? '');
+    const input = await textBox(`Stückpreis für ${d.name}`, 'Zeny pro Stück. Leer lassen, um wieder den Marktpreis zu verwenden.',
+      d.price_override ?? unitPrice(d) ?? '', 'Speichern', 'Marktpreis');
     if (input === null) return;
     await q(sb.rpc('set_price', { p_drop: d.id, p_price: parseZeny(input) }));
     rerender();
@@ -828,7 +1008,8 @@ async function viewRun(id) {
     class: 'primary', disabled: true,
     onclick: action(async () => {
       const n = restPick.size;
-      if (!confirm(`${n} Drop(s) gratis und zufällig an die ${participants.length} Teilnehmer verteilen? Jeder Eintrag geht komplett an eine Person.`)) return;
+      if (!await confirmBox('Rest verteilen', `${n} Drop(s) gratis und zufällig an die ${participants.length} Teilnehmer verteilen? ` +
+        'Jeder Eintrag geht komplett an eine Person.', 'Verteilen')) return;
       await q(sb.rpc('split_rest', { p_run: id, p_drops: [...restPick] }));
       toast(`${n} Drop(s) aufgeteilt`);
       rerender();
@@ -844,7 +1025,8 @@ async function viewRun(id) {
       const list = npcCandidates();
       if (!list.length) return;
       const sum = list.reduce((s, d) => s + d.amount * npcSell(d.npc_price), 0);
-      if (!confirm(`${list.length} übrige Drop(s) für zusammen ${zeny(sum)} an NPC verkaufen? Als Rest markierte bleiben übrig.`)) return;
+      if (!await confirmBox('An NPC verkaufen', `${list.length} übrige Drop(s) für zusammen ${zeny(sum)} an NPC verkaufen? ` +
+        'Als Rest markierte bleiben übrig.', 'Verkaufen')) return;
       for (const d of list) await q(sb.rpc('sell_to_npc', { p_drop: d.id }));
       toast(`${list.length} Drop(s) an NPC verkauft`);
       rerender();
@@ -930,7 +1112,8 @@ async function viewRun(id) {
         title: 'Übrigen Drop übernehmen – wer zuerst kommt',
         onclick: action(async () => {
           const pp = partyPrice(d);
-          if (!confirm(`${d.name} (${zenyFmt.format(d.amount)}×) übernehmen?` + (pp != null ? ` Partypreis: ${zeny(pp)}.` : ''))) return;
+          if (!await confirmBox('Item übernehmen', `${d.name} (${zenyFmt.format(d.amount)}×) übernehmen?` +
+            (pp != null ? ` Du zahlst den Partypreis von ${zeny(pp)} in die Kasse.` : ''), 'Übernehmen')) return;
           await q(sb.rpc('claim_drop', { p_drop: d.id }));
           toast(`${d.name} übernommen`);
           rerender();
@@ -1215,7 +1398,7 @@ async function viewRun(id) {
         canManage ? h('button', {
           class: 'small danger',
           onclick: action(async () => {
-            if (!confirm(`Run „${run.title}" endgültig löschen?`)) return;
+            if (!await confirmBox('Run löschen', `Run „${run.title}“ mit allem Loot endgültig löschen? Das lässt sich nicht rückgängig machen.`, 'Endgültig löschen', true)) return;
             await q(sb.from('runs').delete().eq('id', id));
             location.hash = `#/party/${run.party_id}`;
           }),

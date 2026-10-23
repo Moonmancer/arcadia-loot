@@ -98,6 +98,9 @@ Fertig:
   Interessen an. Müll-Liste auch in der Party-Ansicht pflegbar.
 - An NPC verkaufte Drops (`sold_to_npc`) lassen sich nicht mehr zuweisen (015); Spieler-Verkäufe schon.
 - Run-Ansicht ist breiter (`main.wide`, 1700 px).
+- Keine Browser-Dialoge: `dialog()` / `confirmBox()` / `textBox()` in `app.js`. Phasenwechsel zeigen offene
+  Punkte und bieten Behebungen an (Abholungen abhaken, übrige Drops: Vorauswahl / alle an NPC / alle als Rest,
+  Auszahlungen abhaken), „Ausführen & weiter“ führt sie aus und wechselt dann die Phase.
 - Müll-Vorschläge (016): `trash_suggestions(run)` = Items, die in den letzten 10 Runs (auszahlung/beendet,
   inkl. aktuellem) bei jedem Vorkommen an NPC gingen, in ≥ 2 Runs, noch nicht auf der Müll-Liste.
   Frontend: Vorschlagsblock für Admins in beendeten Runs, vorausgewählt.

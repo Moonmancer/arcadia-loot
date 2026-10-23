@@ -151,6 +151,26 @@ td.num, th.num { text-align: right; white-space: nowrap; font-variant-numeric: t
 .stepper li.current { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
 button.chip.toggle { cursor: pointer; font: inherit; font-size: 12px; }
 
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 10;
+}
+.modal { width: 100%; max-width: 560px; max-height: calc(100vh - 32px); overflow-y: auto; }
+.modal h3 { margin: 0 0 8px; font-size: 17px; }
+.modal p { margin: 0 0 10px; }
+.dialog-issues { margin: 0 0 12px; padding-left: 20px; color: var(--accent); }
+.dialog-issues li + li { margin-top: 4px; }
+.dialog-field { margin-bottom: 10px; }
+.dialog-option { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
+.dialog-option input { margin-top: 3px; }
+.dialog-buttons { justify-content: flex-end; margin-top: 14px; }
+
 .toast {
   position: fixed;
   left: 50%;
@@ -161,6 +181,7 @@ button.chip.toggle { cursor: pointer; font: inherit; font-size: 12px; }
   padding: 10px 16px;
   border-radius: var(--radius);
   max-width: calc(100% - 32px);
+  z-index: 20;
 }
 .toast.error { border-color: var(--bad); color: var(--bad); }
 
