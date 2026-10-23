@@ -77,8 +77,11 @@ Fertig:
   floor(floor(npc_price / 2) × 1,24) (Verkäufer hat Overcharge 10). Spalte „NPC“ in Loot-Liste und
   Wunschliste; Ersatz-Stückpreis, wenn kein Override und kein Marktpreis (bzw. Item mit Attr./Karten).
   `drop_overview` hat dafür `npc_price` (008).
+- An NPC verkaufen (009): RPC `sell_to_npc(drop)` setzt `sold_price` = Menge × NPC-Verkaufspreis
+  (gleiche Formel serverseitig) und `drops.sold_to_npc`; manueller Erlös/Zuweisung hebt die Markierung auf.
+  Frontend: Knopf „NPC“ pro übrigem Drop und „Alle an NPC“ in der Phase Verkauf & Rest.
 - Migrationen lokal mit PGlite getestet (Auth-Stubs).
-- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–008 eingespielt,
+- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–009 eingespielt,
   `sync-arcadia` deployt, Secrets + Vault gesetzt, Items/Icons/Preise geladen, Cron-Jobs aktiv.
   GitHub-Repo `Moonmancer/arcadia-loot` (öffentlich); Pages aktiv (Source: GitHub Actions).
 

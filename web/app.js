@@ -639,7 +639,7 @@ async function viewRun(id) {
       chips.append(open
         ? h('span', { class: 'muted small' }, '–')
         : d.sold_price != null
-          ? h('span', { class: 'chip win' }, `verkauft ${zeny(d.sold_price)}`)
+          ? h('span', { class: 'chip win' }, `${d.sold_to_npc ? 'an NPC verkauft' : 'verkauft'} ${zeny(d.sold_price)}`)
           : h('span', { class: 'muted small' }, 'übrig'));
     }
 
@@ -659,6 +659,17 @@ async function viewRun(id) {
       actions.push(h('button', { class: 'small' + (mine ? ' on' : ''), onclick: toggleInterest(d, mine) }, mine ? 'Will ich ✓' : 'Will ich'));
     }
     if (['abholung', 'verkauf'].includes(status) && !list.length && isSeller) actions.push(saleControl(d));
+    if (status === 'verkauf' && !list.length && isSeller && !d.sold_to_npc && npcSell(d.npc_price) != null) {
+      actions.push(h('button', {
+        class: 'small',
+        title: `An NPC verkaufen: ${zenyFmt.format(d.amount)} × ${zeny(npcSell(d.npc_price))} (½ NPC-Preis + 24 % Overcharge)`,
+        onclick: action(async () => {
+          const price = await q(sb.rpc('sell_to_npc', { p_drop: d.id }));
+          toast(`${d.name} an NPC verkauft: ${zeny(price)}`);
+          rerender();
+        }),
+      }, 'NPC'));
+    }
     if (restMode && !list.length && d.sold_price == null) {
       const box = h('input', { type: 'checkbox', title: 'Für zufällige Aufteilung auswählen' });
       box.addEventListener('change', () => { box.checked ? restPick.add(d.id) : restPick.delete(d.id); updateRestButton(); });
@@ -722,10 +733,22 @@ async function viewRun(id) {
   filter.addEventListener('input', applyFilter);
   onlyInterest.addEventListener('change', applyFilter);
 
+  const npcLeft = unsold.filter((d) => npcSell(d.npc_price) != null);
   const restBar = restMode && unsold.length ? h('div', { class: 'panel row spread', style: 'margin:10px 0' },
     h('span', { class: 'small' },
       `${unsold.length} Drop(s) übrig: Erlös eintragen, wenn verkauft – oder als „Rest“ auswählen und gratis zufällig verteilen (jeder Eintrag komplett an eine Person, reihum gleichmäßig).`),
     h('div', { class: 'row' },
+      npcLeft.length ? h('button', {
+        class: 'small',
+        title: 'Alle übrigen Drops mit NPC-Preis an NPC verkaufen',
+        onclick: action(async () => {
+          const sum = npcLeft.reduce((s, d) => s + d.amount * npcSell(d.npc_price), 0);
+          if (!confirm(`${npcLeft.length} übrige Drop(s) für zusammen ${zeny(sum)} an NPC verkaufen?`)) return;
+          for (const d of npcLeft) await q(sb.rpc('sell_to_npc', { p_drop: d.id }));
+          toast(`${npcLeft.length} Drop(s) an NPC verkauft`);
+          rerender();
+        }),
+      }, `Alle an NPC (${npcLeft.length})`) : null,
       h('button', {
         class: 'small',
         onclick: () => { for (const [box, did] of restBoxes) { box.checked = true; restPick.add(did); } updateRestButton(); },
