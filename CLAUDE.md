@@ -84,6 +84,9 @@ Fertig:
   Party (Phase auszahlung/beendet, ohne aktuellen) übrig war und als Rest / an NPC / an Spieler ging.
   Wird aus Run-Daten gelesen, keine eigene Tabelle. Frontend: häufigstes Ergebnis als Badge „Trend: …“,
   bei Trend Rest ist „Rest“ vorausgewählt; Gleichstand → kein Vorschlag.
+- Startseite „Offen bei dir“: eigene nicht abgeholte Anteile (Runs in abholung/verkauf/auszahlung) und
+  eigener Saldo in Runs der Phase auszahlung, solange nicht als ausgezahlt markiert. Abrechnung steckt in
+  `settle()` in `app.js` und wird von Run-Ansicht und Startseite gemeinsam genutzt.
 - Migrationen lokal mit PGlite getestet (Auth-Stubs).
 - **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–010 eingespielt,
   `sync-arcadia` deployt, Secrets + Vault gesetzt, Items/Icons/Preise geladen, Cron-Jobs aktiv.

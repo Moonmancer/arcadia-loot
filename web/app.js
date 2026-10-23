@@ -138,12 +138,120 @@ async function route() {
 const rerender = () => route();
 window.addEventListener('hashchange', route);
 
+// ---------- Abrechnung ----------
+
+// Abrechnung eines Runs: Empfänger zahlen den Partypreis (pct % vom Stückpreis) in die Kasse, Rest ist gratis.
+// Kasse + Verkaufserlöse werden gleichmäßig auf die Teilnehmer verteilt; Saldo = erhält − zahlt.
+// Erwartet interests/participants mit profiles.display_name.
+function settle({ status, pct, drops, interests, participants }) {
+  const open = status === 'offen';
+  // Stückpreis: Override des Admins, sonst Marktpreis (nur normale Items), sonst NPC-Verkaufspreis
+  const unit = (d) => d.price_override ?? (d.is_plain ? unitPrice(d) : null) ?? npcSell(d.npc_price);
+  const value = (d, amount = d.amount) => (unit(d) != null ? unit(d) * amount : null);
+  const partyPrice = (d, amount = d.amount) => (unit(d) != null ? Math.round(unit(d) * amount * pct / 100) : null);
+
+  const dropById = new Map(drops.map((d) => [d.id, d]));
+  const withInterest = new Set(interests.map((i) => i.drop_id));
+  // In der Phase „offen“ zählen nur direkte Zuweisungen, sonst alle zugeteilten Anteile
+  const handouts = interests.filter((i) => i.share > 0 && !(open && dropById.get(i.drop_id)?.assigned_to == null));
+
+  const people = new Map(participants.map((p) => [p.user_id, { name: p.profiles.display_name, items: [], pays: 0, paid_at: p.paid_at }]));
+  let pot = 0;
+  let missingPrice = 0;
+  for (const i of handouts) {
+    const d = dropById.get(i.drop_id);
+    const p = people.get(i.user_id) ?? { name: i.profiles.display_name, items: [], pays: 0 };
+    people.set(i.user_id, p);
+    p.items.push(`${i.share}× ${d.name}` + (i.source === 'rest' ? ' (Rest)' : ''));
+    if (i.source === 'rest') continue;
+    const pp = partyPrice(d, i.share);
+    if (pp == null) missingPrice++;
+    p.pays += pp ?? 0;
+    pot += pp ?? 0;
+  }
+  const sold = drops.filter((d) => !withInterest.has(d.id) && d.sold_price != null);
+  const sales = sold.reduce((s, d) => s + d.sold_price, 0);
+  const shareEach = participants.length ? Math.floor((pot + sales) / participants.length) : 0;
+  const partIds = new Set(participants.map((p) => p.user_id));
+  const rows = [...people.entries()]
+    .map(([uid, p]) => ({ uid, ...p, gets: partIds.has(uid) ? shareEach : 0 }))
+    .map((p) => ({ ...p, saldo: p.gets - p.pays }));
+  return { unit, value, partyPrice, handouts, pot, sold, sales, shareEach, missingPrice, rows, partIds };
+}
+
 // ---------- Partys ----------
 
+// Was beim angemeldeten Nutzer noch offen ist: Anteile abholen, Auszahlung (Saldo) in laufenden Runs
+async function openTasks() {
+  const [pickups, unpaid] = await Promise.all([
+    q(sb.from('interests')
+      .select('drop_id, share, source, drops!inner(name, run_id, runs!inner(id, title, status, parties(name)))')
+      .eq('user_id', me.id).gt('share', 0).is('picked_up_at', null)
+      .in('drops.runs.status', ['abholung', 'verkauf', 'auszahlung'])),
+    q(sb.from('run_participants')
+      .select('run_id, runs!inner(id, title, status, parties(name, party_price_pct))')
+      .eq('user_id', me.id).is('paid_at', null).eq('runs.status', 'auszahlung')),
+  ]);
+
+  // Saldo je Run mit Auszahlung berechnen (gleiche Rechnung wie in der Run-Ansicht)
+  const runIds = unpaid.map((u) => u.run_id);
+  let payouts = [];
+  if (runIds.length) {
+    const [drops, interests, participants] = await Promise.all([
+      q(sb.from('drop_overview').select('*').in('run_id', runIds)),
+      q(sb.from('interests')
+        .select('drop_id, user_id, share, source, profiles!interests_user_id_fkey(display_name), drops!inner(run_id)')
+        .in('drops.run_id', runIds)),
+      q(sb.from('run_participants').select('run_id, user_id, paid_at, profiles!run_participants_user_id_fkey(display_name)')
+        .in('run_id', runIds)),
+    ]);
+    payouts = unpaid.map((u) => {
+      const calc = settle({
+        status: u.runs.status,
+        pct: u.runs.parties.party_price_pct,
+        drops: drops.filter((d) => d.run_id === u.run_id),
+        interests: interests.filter((i) => i.drops.run_id === u.run_id),
+        participants: participants.filter((p) => p.run_id === u.run_id),
+      });
+      return { run: u.runs, saldo: calc.rows.find((r) => r.uid === me.id)?.saldo ?? 0 };
+    });
+  }
+
+  const byRun = new Map();
+  for (const i of pickups) {
+    const r = i.drops.runs;
+    if (!byRun.has(r.id)) byRun.set(r.id, { run: r, items: [] });
+    byRun.get(r.id).items.push(`${zenyFmt.format(i.share)}× ${i.drops.name}` + (i.source === 'rest' ? ' (Rest)' : ''));
+  }
+
+  if (!byRun.size && !payouts.length) return null;
+  const runLink = (r) => h('a', { href: `#/run/${r.id}` }, r.title, h('span', { class: 'muted small' }, ` · ${r.parties.name}`));
+  return h('div', { class: 'cards', style: 'margin-bottom:8px' },
+    byRun.size ? h('div', { class: 'panel', style: 'border-color:var(--accent)' },
+      h('strong', {}, 'Abholen'),
+      h('ul', { class: 'list' }, [...byRun.values()].map(({ run, items }) => h('li', { style: 'display:block' },
+        runLink(run),
+        h('div', { class: 'small muted' }, items.join(', ')),
+      ))),
+    ) : null,
+    payouts.length ? h('div', { class: 'panel', style: 'border-color:var(--accent)' },
+      h('strong', {}, 'Auszahlung'),
+      h('ul', { class: 'list' }, payouts.map(({ run, saldo }) => h('li', { style: 'display:block' },
+        runLink(run),
+        h('div', { class: 'small', style: `color:var(${saldo < 0 ? '--bad' : '--good'})` },
+          saldo < 0 ? `Du zahlst ${zeny(-saldo)} in die Kasse` : saldo > 0 ? `Du bekommst ${zeny(saldo)}` : 'Ausgeglichen – nichts zu zahlen'),
+      ))),
+    ) : null,
+  );
+}
+
 async function viewParties() {
-  const parties = await q(sb.from('parties')
-    .select('id, name, created_at, party_members(count), runs(count)')
-    .order('created_at', { ascending: false }));
+  const [parties, tasks] = await Promise.all([
+    q(sb.from('parties')
+      .select('id, name, created_at, party_members(count), runs(count)')
+      .order('created_at', { ascending: false })),
+    openTasks(),
+  ]);
 
   const name = h('input', { type: 'text', placeholder: 'Name der neuen Party', maxlength: 60 });
   const create = action(async () => {
@@ -154,7 +262,9 @@ async function viewParties() {
   name.addEventListener('keydown', (e) => e.key === 'Enter' && create(e));
 
   return h('div', {},
-    h('h1', {}, 'Meine Partys'),
+    tasks ? h('h1', {}, 'Offen bei dir') : null,
+    tasks,
+    h('h1', { style: tasks ? 'margin-top:24px' : '' }, 'Meine Partys'),
     parties.length
       ? h('div', { class: 'cards' }, parties.map((p) =>
           h('a', { class: 'panel card', href: `#/party/${p.id}` },
@@ -404,15 +514,11 @@ async function viewRun(id) {
     list.sort((a, b) => (b.roll ?? 0) - (a.roll ?? 0) || a.profiles.display_name.localeCompare(b.profiles.display_name));
   }
 
-  // Stückpreis: Override des Admins, sonst Marktpreis (nur für normale Items aussagekräftig)
-  // Stückpreis: Override des Admins, sonst Marktpreis (nur normale Items), sonst NPC-Verkaufspreis
-  const unit = (d) => d.price_override ?? (d.is_plain ? unitPrice(d) : null) ?? npcSell(d.npc_price);
-  const value = (d, amount = d.amount) => (unit(d) != null ? unit(d) * amount : null);
-  const partyPrice = (d, amount = d.amount) => (unit(d) != null ? Math.round(unit(d) * amount * pct / 100) : null);
+  const calc = settle({ status, pct, drops, interests, participants });
+  const { unit, value, partyPrice, handouts } = calc;
   const total = drops.reduce((s, d) => s + (value(d) ?? 0), 0);
   const leftovers = drops.filter((d) => !byDrop.has(d.id));          // ohne Empfänger
   const unsold = leftovers.filter((d) => d.sold_price == null);
-  const handouts = interests.filter((i) => i.share > 0 && !(open && dropById.get(i.drop_id)?.assigned_to == null));
 
   const changeStatus = (to, question) => action(async () => {
     if (question && !confirm(question)) return;
@@ -803,28 +909,8 @@ async function viewRun(id) {
   // ----- Abrechnung: Empfänger zahlen den Partypreis, Kasse + Verkäufe gehen an die Teilnehmer -----
   let summary = null;
   if (drops.length && handouts.length) {
-    const people = new Map(participants.map((p) => [p.user_id, { name: p.profiles.display_name, items: [], pays: 0, paid_at: p.paid_at }]));
-    let pot = 0;
-    let missingPrice = 0;
-    for (const i of handouts) {
-      const d = dropById.get(i.drop_id);
-      const p = people.get(i.user_id) ?? { name: i.profiles.display_name, items: [], pays: 0 };
-      people.set(i.user_id, p);
-      p.items.push(`${i.share}× ${d.name}` + (i.source === 'rest' ? ' (Rest)' : ''));
-      if (i.source === 'rest') continue;                       // Rest ist gratis
-      const pp = partyPrice(d, i.share);
-      if (pp == null) missingPrice++;
-      p.pays += pp ?? 0;
-      pot += pp ?? 0;
-    }
-    const sold = leftovers.filter((d) => d.sold_price != null);
-    const sales = sold.reduce((s, d) => s + d.sold_price, 0);
-    const shareEach = participants.length ? Math.floor((pot + sales) / participants.length) : 0;
-    const partIds = new Set(participants.map((p) => p.user_id));
-    const rowsSum = [...people.entries()]
-      .map(([uid, p]) => ({ uid, ...p, gets: partIds.has(uid) ? shareEach : 0 }))
-      .map((p) => ({ ...p, saldo: p.gets - p.pays }))
-      .sort((a, b) => a.saldo - b.saldo);
+    const { pot, sold, sales, shareEach, missingPrice, partIds } = calc;
+    const rowsSum = [...calc.rows].sort((a, b) => a.saldo - b.saldo);
     const showPaid = ['auszahlung', 'beendet'].includes(status);
 
     const paidToggle = (p) => {
