@@ -120,7 +120,7 @@ Fertig:
   eigener Saldo in Runs der Phase auszahlung, solange nicht als ausgezahlt markiert. Abrechnung steckt in
   `settle()` in `app.js` und wird von Run-Ansicht und Startseite gemeinsam genutzt.
 - Migrationen lokal mit PGlite getestet (Auth-Stubs).
-- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–018 eingespielt,
+- **Live:** Supabase-Projekt `puddakqxselbytszbzhw` (Frankfurt), Migrationen 001–019 eingespielt,
   `sync-arcadia` deployt, Secrets + Vault gesetzt, Items/Icons/Preise geladen, Cron-Jobs aktiv.
   GitHub-Repo `Moonmancer/arcadia-loot` (öffentlich); Pages aktiv (Source: GitHub Actions).
 
@@ -135,7 +135,8 @@ Offen (nächste Schritte):
    `https://moonmancer.github.io/arcadia-loot/`, Redirect URLs zusätzlich `http://localhost:5500/`.
 2. Echten Login-Durchlauf testen (Pages ist live: https://moonmancer.github.io/arcadia-loot/).
 3. Discord-Gildenprüfung beim Login.
-4. Free-Projekte pausieren nach 7 Tagen Inaktivität – prüfen, ob die Cron-Jobs das verhindern, sonst Keep-alive.
+4. Keep-alive: pg_cron-Jobs + GitHub-Workflow `keepalive.yml` (alle 3 Tage RPC `ping()`, 019). GitHub
+   deaktiviert zeitgesteuerte Workflows nach 60 Tagen ohne Commit – dann in Actions wieder aktivieren.
 
 ## Bekannte API-Eigenheiten
 

@@ -1,0 +1,27 @@
+name: Supabase keep-alive
+
+# Free-Projekte pausieren nach 7 Tagen ohne Aktivität. Zusätzlich zu den pg_cron-Jobs fragt dieser
+# Workflow alle 3 Tage die Datenbank ab (RPC public.ping, öffentlicher Schlüssel aus web/config.js).
+on:
+  schedule:
+    - cron: '17 6 */3 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: web/config.js
+          sparse-checkout-cone-mode: false
+      - name: Datenbank anpingen
+        run: |
+          url=$(grep -oP "SUPABASE_URL = '\K[^']+" web/config.js)
+          key=$(grep -oP "SUPABASE_KEY = '\K[^']+" web/config.js)
+          curl -sS --fail-with-body -X POST "$url/rest/v1/rpc/ping" \
+            -H "apikey: $key" -H "Content-Type: application/json" -d '{}'
+          echo
