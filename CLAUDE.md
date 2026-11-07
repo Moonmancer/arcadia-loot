@@ -137,6 +137,8 @@ Offen (nächste Schritte):
 3. Discord-Gildenprüfung beim Login.
 4. Keep-alive: pg_cron-Jobs + GitHub-Workflow `keepalive.yml` (alle 3 Tage RPC `ping()`, 019). GitHub
    deaktiviert zeitgesteuerte Workflows nach 60 Tagen ohne Commit – dann in Actions wieder aktivieren.
+5. Summe verkaufter Müll anzeigen: NPC-Erlös aus dem Müll-Verkauf (Müll-Liste + `sold_to_npc`) pro Run
+   ausweisen, z. B. im Run-Kopf, im Dialog „Weiter: Müll verkaufen“ und in der Abrechnung.
 
 ## Bekannte API-Eigenheiten
 
