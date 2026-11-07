@@ -101,6 +101,8 @@ Fertig:
   `sold_to_npc = true`, `sold_price = 0` (018); im Frontend „Müll → entsorgen“ / „entsorgt“, kein Konflikt.
 - Müll-Knopf im Run speichert im Hintergrund (sofort sichtbar, pro Item nacheinander, bei Fehler zurück).
 - Run-Ansicht ist breiter (`main.wide`, 1700 px).
+- Loot- und Müll-Liste sortiert nach Kategorie, dann Item-ID: usable (USABLE/HEALING/DELAYCONSUME/CASH), pet,
+  armor, weapon, ammo, card, misc (ETC + unbekannt), costume (IT_ARMOR mit „Costume“ im Namen) – `itemCategory()`.
 - Keine Browser-Dialoge: `dialog()` / `confirmBox()` / `textBox()` in `app.js`. Phasenwechsel zeigen offene
   Punkte und bieten Behebungen an (Abholungen abhaken, übrige Drops: Vorauswahl / alle an NPC / alle als Rest,
   Auszahlungen abhaken), „Ausführen & weiter“ führt sie aus und wechselt dann die Phase.

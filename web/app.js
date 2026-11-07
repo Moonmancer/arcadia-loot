@@ -37,6 +37,23 @@ function icon(src) {
 // Stückpreis für die Wertschätzung: Median der Angebote, sonst günstigstes Angebot
 const unitPrice = (p) => (p ? p.sell_median ?? p.sell_min ?? null : null);
 
+// Item-Kategorie aus dem API-Typ; Reihenfolge für Loot- und Müll-Liste (danach Item-ID)
+const CATEGORY_ORDER = ['usable', 'pet', 'armor', 'weapon', 'ammo', 'card', 'misc', 'costume'];
+function itemCategory(type, name) {
+  switch (type) {
+    case 'IT_USABLE': case 'IT_HEALING': case 'IT_DELAYCONSUME': case 'IT_CASH': return 'usable';
+    case 'IT_PETEGG': case 'IT_PETARMOR': return 'pet';
+    case 'IT_ARMOR': return /\bcostume\b/i.test(name ?? '') ? 'costume' : 'armor';
+    case 'IT_WEAPON': return 'weapon';
+    case 'IT_AMMO': return 'ammo';
+    case 'IT_CARD': return 'card';
+    default: return 'misc';                      // IT_ETC und unbekannte Items
+  }
+}
+const byCategory = (typeOf, nameOf, idOf) => (a, b) =>
+  CATEGORY_ORDER.indexOf(itemCategory(typeOf(a), nameOf(a))) - CATEGORY_ORDER.indexOf(itemCategory(typeOf(b), nameOf(b)))
+  || idOf(a) - idOf(b);
+
 // Verkauf an NPC: halber NPC-Preis, mit Overcharge (Stufe 10) +24 % – Verkäufer hat den Skill
 const npcSell = (npcPrice) => (npcPrice > 0 ? Math.floor(Math.floor(npcPrice / 2) * 124 / 100) : null);
 
@@ -387,7 +404,7 @@ async function viewParty(id) {
     q(sb.from('party_members').select('user_id, role, profiles(display_name, avatar_url)').eq('party_id', id)),
     q(sb.from('runs').select('id, title, status, created_at, drops(count)').eq('party_id', id)
       .order('created_at', { ascending: false })),
-    q(sb.from('party_trash').select('item_id, items(name, icon, slots, npc_price)').eq('party_id', id)),
+    q(sb.from('party_trash').select('item_id, items(name, type, icon, slots, npc_price)').eq('party_id', id)),
   ]);
   if (!party) return h('p', { class: 'muted' }, 'Party nicht gefunden oder kein Zugriff.');
 
@@ -578,7 +595,7 @@ async function viewParty(id) {
   }
 
   // Müll-Liste: Items, die in der Phase „Müll verkaufen“ automatisch an NPC gehen
-  trash.sort((a, b) => (a.items?.name ?? '').localeCompare(b.items?.name ?? ''));
+  trash.sort(byCategory((t) => t.items?.type, (t) => t.items?.name, (t) => t.item_id));
   const trashIds = new Set(trash.map((t) => t.item_id));
   let trashAdd = null;
   if (isAdmin) {
@@ -698,7 +715,8 @@ async function viewRun(id) {
 
   // interests und run_participants haben je zwei FKs auf profiles → Beziehung explizit benennen
   const [drops, interests, members, participants, wishlist] = await Promise.all([
-    q(sb.from('drop_overview').select('*').eq('run_id', id).order('pos')),
+    q(sb.from('drop_overview').select('*').eq('run_id', id).order('pos'))
+      .then((list) => list.sort(byCategory((d) => d.item_type, (d) => d.name, (d) => d.item_id))),
     q(sb.from('interests')
       .select('drop_id, user_id, roll, share, source, picked_up_at, profiles!interests_user_id_fkey(display_name), drops!inner(run_id)')
       .eq('drops.run_id', id)),
