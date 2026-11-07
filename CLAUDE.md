@@ -101,6 +101,7 @@ Fertig:
   `sold_to_npc = true`, `sold_price = 0` (018); im Frontend „Müll → entsorgen“ / „entsorgt“, kein Konflikt.
 - Müll-Knopf im Run speichert im Hintergrund (sofort sichtbar, pro Item nacheinander, bei Fehler zurück).
 - Run-Ansicht ist breiter (`main.wide`, 1700 px).
+- Summe verkaufter Müll (Müll-Liste + `sold_to_npc`) im Run-Kopf und in der Abrechnung („davon Müll“).
 - Loot- und Müll-Liste sortiert nach Kategorie, dann Item-ID: usable (USABLE/HEALING/DELAYCONSUME/CASH), pet,
   armor, weapon, ammo, card, misc (ETC + unbekannt), costume (IT_ARMOR mit „Costume“ im Namen) – `itemCategory()`.
 - Keine Browser-Dialoge: `dialog()` / `confirmBox()` / `textBox()` in `app.js`. Phasenwechsel zeigen offene
@@ -139,8 +140,6 @@ Offen (nächste Schritte):
 3. Discord-Gildenprüfung beim Login.
 4. Keep-alive: pg_cron-Jobs + GitHub-Workflow `keepalive.yml` (alle 3 Tage RPC `ping()`, 019). GitHub
    deaktiviert zeitgesteuerte Workflows nach 60 Tagen ohne Commit – dann in Actions wieder aktivieren.
-5. Summe verkaufter Müll anzeigen: NPC-Erlös aus dem Müll-Verkauf (Müll-Liste + `sold_to_npc`) pro Run
-   ausweisen, z. B. im Run-Kopf, im Dialog „Weiter: Müll verkaufen“ und in der Abrechnung.
 
 ## Bekannte API-Eigenheiten
 

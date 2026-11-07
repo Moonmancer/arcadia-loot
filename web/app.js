@@ -1269,6 +1269,9 @@ async function viewRun(id) {
   const hideTrash = h('input', { type: 'checkbox' });
   hideTrash.checked = status !== 'offen';
   const isSoldTrash = (d) => trash.has(d.item_id) && d.sold_to_npc;
+  // Summe verkaufter Müll (Müll-Liste + an NPC verkauft, entsorgter Müll zählt mit 0 z)
+  const trashSold = drops.filter(isSoldTrash);
+  const trashSum = trashSold.reduce((sum, d) => sum + (d.sold_price ?? 0), 0);
   const soldTrashCount = drops.filter(isSoldTrash).length;
 
   const rows = drops.map((d) => {
@@ -1503,7 +1506,8 @@ async function viewRun(id) {
       h('h2', {}, open ? 'Abrechnung (bisher zugewiesen)' : 'Abrechnung'),
       h('div', { class: 'cards', style: 'margin-bottom:10px' },
         h('div', { class: 'panel' }, h('div', { class: 'muted small' }, 'Kasse aus Partypreisen'), h('strong', {}, zeny(pot))),
-        h('div', { class: 'panel' }, h('div', { class: 'muted small' }, `Verkäufe (${sold.length})`), h('strong', {}, zeny(sales))),
+        h('div', { class: 'panel' }, h('div', { class: 'muted small' }, `Verkäufe (${sold.length})`), h('strong', {}, zeny(sales)),
+          trashSold.length ? h('div', { class: 'muted small' }, `davon Müll (${trashSold.length}): ${zeny(trashSum)}`) : null),
         h('div', { class: 'panel' }, h('div', { class: 'muted small' }, `Anteil pro Teilnehmer (${participants.length})`), h('strong', {}, zeny(shareEach))),
         !open && unsold.length ? h('div', { class: 'panel' },
           h('div', { class: 'muted small' }, `Noch übrig (${unsold.length})`),
@@ -1604,7 +1608,9 @@ async function viewRun(id) {
             }),
           }, '✎') : null),
         h('div', { class: 'muted small' },
-          `${drops.length} Drops · Marktwert ≈ ${zeny(total)} · Partypreis ${pct} % · ${participants.length} Teilnehmer`
+          `${drops.length} Drops · Marktwert ≈ ${zeny(total)}` +
+          (trashSold.length ? ` · Müll verkauft: ${zeny(trashSum)} (${trashSold.length})` : '') +
+          ` · Partypreis ${pct} % · ${participants.length} Teilnehmer`
           + (run.rolled_at ? ` · gewürfelt ${date(run.rolled_at)}` : '')),
       ),
       h('div', { class: 'row' },
